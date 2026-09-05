@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "selling_price_uzs" numeric(14, 2);

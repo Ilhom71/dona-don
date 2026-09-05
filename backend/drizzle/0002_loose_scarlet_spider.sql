@@ -1,0 +1,1 @@
+ALTER TABLE "stock_movements" ADD COLUMN "vehicle_number" varchar(32);
