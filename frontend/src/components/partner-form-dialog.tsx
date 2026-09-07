@@ -41,10 +41,14 @@ export function PartnerFormDialog({
   partner,
   open,
   onOpenChange,
+  onCreated,
 }: {
   partner?: Partner | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Yangi hamkor muvaffaqiyatli qo'shilganda chaqiriladi (masalan uni boshqa
+  // formadagi "Hamkor" tanlovida avtomatik tanlash uchun).
+  onCreated?: (partner: Partner) => void;
 }) {
   const queryClient = useQueryClient();
   const { register, handleSubmit, control, reset, formState: { errors } } = useForm<FormValues>({
@@ -74,12 +78,13 @@ export function PartnerFormDialog({
         notes: values.notes || null,
       };
       return partner
-        ? api.put(`/partners/${partner.id}`, payload)
-        : api.post("/partners", payload);
+        ? api.put<Partner>(`/partners/${partner.id}`, payload)
+        : api.post<Partner>("/partners", payload);
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       toast.success(partner ? "Hamkor yangilandi" : "Hamkor qo'shildi");
       queryClient.invalidateQueries({ queryKey: ["partners"] });
+      if (!partner) onCreated?.(saved);
       onOpenChange(false);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),

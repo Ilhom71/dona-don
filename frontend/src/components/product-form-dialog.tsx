@@ -32,6 +32,7 @@ const schema = z.object({
   unit: z.enum(["kg", "ton"]),
   minStockAlert: z.string().optional(),
   sellingPriceUzs: z.string().optional(),
+  avgCostUzs: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -56,7 +57,14 @@ export function ProductFormDialog({
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", unit: "kg", minStockAlert: "", sellingPriceUzs: "", notes: "" },
+    defaultValues: {
+      name: "",
+      unit: "kg",
+      minStockAlert: "",
+      sellingPriceUzs: "",
+      avgCostUzs: "",
+      notes: "",
+    },
   });
 
   useEffect(() => {
@@ -66,6 +74,7 @@ export function ProductFormDialog({
         unit: product?.unit ?? "kg",
         minStockAlert: product?.minStockAlert ?? "",
         sellingPriceUzs: product?.sellingPriceUzs ?? "",
+        avgCostUzs: product?.avgCostUzs ?? "",
         notes: product?.notes ?? "",
       });
     }
@@ -78,6 +87,9 @@ export function ProductFormDialog({
         unit: values.unit,
         minStockAlert: values.minStockAlert ? values.minStockAlert : null,
         sellingPriceUzs: values.sellingPriceUzs ? values.sellingPriceUzs : null,
+        // Faqat tahrirlashda va qiymat kiritilgan bo'lsa yuboriladi - yangi
+        // mahsulot doim 0 tan narx bilan boshlanadi (kirim orqali hisoblanadi).
+        avgCostUzs: product && values.avgCostUzs ? values.avgCostUzs : undefined,
         notes: values.notes ? values.notes : null,
       };
       return product
@@ -87,6 +99,8 @@ export function ProductFormDialog({
     onSuccess: () => {
       toast.success(product ? "Mahsulot yangilandi" : "Mahsulot qo'shildi");
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       onOpenChange(false);
     },
     onError: (err) => {
@@ -141,6 +155,16 @@ export function ProductFormDialog({
               <Input id="minStockAlert" type="number" step="any" {...register("minStockAlert")} />
             </div>
           </div>
+          {product && (
+            <div className="space-y-2">
+              <Label htmlFor="avgCostUzs">Tan narx (so&apos;m, barcha omborlar uchun)</Label>
+              <Input id="avgCostUzs" type="number" step="any" {...register("avgCostUzs")} />
+              <p className="text-xs text-muted-foreground">
+                Odatda kirim orqali avtomatik hisoblanadi - faqat xato bo&apos;lganda qo&apos;lda
+                tuzatish uchun.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="notes">Izoh</Label>
             <Textarea id="notes" {...register("notes")} />

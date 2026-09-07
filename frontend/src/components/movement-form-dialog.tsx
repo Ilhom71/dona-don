@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { api, ApiError } from "@/lib/api";
 import type { Product, Partner, Warehouse } from "@/lib/types";
 import { toDateInputValue } from "@/lib/format";
@@ -54,6 +56,7 @@ export function MovementFormDialog({
   defaultType?: "in" | "out";
 }) {
   const queryClient = useQueryClient();
+  const [partnerFormOpen, setPartnerFormOpen] = useState(false);
 
   const { data: products } = useQuery({
     queryKey: ["products"],
@@ -68,7 +71,7 @@ export function MovementFormDialog({
     queryFn: () => api.get<Warehouse[]>("/warehouses"),
   });
 
-  const { register, handleSubmit, control, watch, reset, formState: { errors } } =
+  const { register, handleSubmit, control, watch, reset, setValue, formState: { errors } } =
     useForm<FormValues>({
       resolver: zodResolver(schema),
       defaultValues: {
@@ -257,28 +260,39 @@ export function MovementFormDialog({
           {type === "in" && (
             <div className="space-y-2">
               <Label>Yetkazib beruvchi (ixtiyoriy)</Label>
-              <Controller
-                control={control}
-                name="partnerId"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={partners?.map((p) => ({ value: p.id, label: p.name })) ?? []}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Hamkorni tanlang" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {partners?.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
+              <div className="flex gap-2">
+                <Controller
+                  control={control}
+                  name="partnerId"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={partners?.map((p) => ({ value: p.id, label: p.name })) ?? []}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Hamkorni tanlang" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {partners?.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Yangi hamkor qo'shish"
+                  onClick={() => setPartnerFormOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           )}
 
@@ -299,6 +313,14 @@ export function MovementFormDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+
+      {/* Ro'yxatda yo'q yangi yetkazib beruvchi bo'lsa, shu yerdan
+          chiqmasdan qo'shish mumkin - qo'shilgach avtomatik tanlanadi. */}
+      <PartnerFormDialog
+        open={partnerFormOpen}
+        onOpenChange={setPartnerFormOpen}
+        onCreated={(p) => setValue("partnerId", p.id)}
+      />
     </Dialog>
   );
 }

@@ -2,11 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Users, Wallet, ShoppingCart, FileSpreadsheet } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Users,
+  Wallet,
+  ShoppingCart,
+  FileSpreadsheet,
+  History,
+} from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -16,18 +25,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { PaymentFormDialog } from "@/components/payment-form-dialog";
-import { api, apiUrl } from "@/lib/api";
+import { BalanceBadge } from "@/components/balance-badge";
+import { api, apiUrl, ApiError } from "@/lib/api";
 import type { Partner } from "@/lib/types";
-import { formatMoney, partnerTypeLabels } from "@/lib/format";
-
-function BalanceBadge({ value }: { value: number }) {
-  if (value <= 0) return <Badge variant="secondary">Qarzi yo'q</Badge>;
-  return <Badge variant="destructive">{formatMoney(value)} qarz</Badge>;
-}
+import { partnerTypeLabels } from "@/lib/format";
 
 export default function PartnersPage() {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["partners"],
     queryFn: () => api.get<Partner[]>("/partners"),
@@ -36,6 +52,18 @@ export default function PartnersPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Partner | null>(null);
   const [paymentTarget, setPaymentTarget] = useState<Partner | null>(null);
+  const [deleting, setDeleting] = useState<Partner | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/partners/${id}`),
+    onSuccess: () => {
+      toast.success("Hamkor arxivga o'tkazildi");
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["archived-partners"] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
+    onSettled: () => setDeleting(null),
+  });
 
   return (
     <div className="space-y-4">
@@ -81,7 +109,11 @@ export default function PartnersPage() {
               <TableBody>
                 {data.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/savdo/hamkorlar/${p.id}`} className="hover:underline">
+                        {p.name}
+                      </Link>
+                    </TableCell>
                     <TableCell>{partnerTypeLabels[p.type]}</TableCell>
                     <TableCell>{p.phone ?? "-"}</TableCell>
                     <TableCell>
@@ -89,6 +121,13 @@ export default function PartnersPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
+                        <Link
+                          href={`/savdo/hamkorlar/${p.id}`}
+                          title="Tarix"
+                          className={buttonVariants({ variant: "ghost", size: "icon" })}
+                        >
+                          <History className="h-4 w-4" />
+                        </Link>
                         <Link
                           href={`/savdo/yangi?partnerId=${p.id}`}
                           title="Sotish"
@@ -121,6 +160,9 @@ export default function PartnersPage() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setDeleting(p)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -135,10 +177,19 @@ export default function PartnersPage() {
                 <CardContent className="space-y-2 py-3">
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="font-medium">{p.name}</p>
+                      <Link href={`/savdo/hamkorlar/${p.id}`} className="font-medium hover:underline">
+                        {p.name}
+                      </Link>
                       <p className="text-sm text-muted-foreground">{partnerTypeLabels[p.type]}</p>
                     </div>
                     <div className="flex gap-1">
+                      <Link
+                        href={`/savdo/hamkorlar/${p.id}`}
+                        title="Tarix"
+                        className={buttonVariants({ variant: "ghost", size: "icon" })}
+                      >
+                        <History className="h-4 w-4" />
+                      </Link>
                       <Link
                         href={`/savdo/yangi?partnerId=${p.id}`}
                         title="Sotish"
@@ -166,6 +217,9 @@ export default function PartnersPage() {
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
+                      <Button variant="ghost" size="icon" onClick={() => setDeleting(p)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-sm">
@@ -187,6 +241,27 @@ export default function PartnersPage() {
           onOpenChange={(o) => !o && setPaymentTarget(null)}
         />
       )}
+
+      <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Hamkorni o'chirish</AlertDialogTitle>
+            <AlertDialogDescription>
+              &quot;{deleting?.name}&quot; hamkorini o'chirmoqchimisiz? Yozuv butunlay o'chmaydi -
+              &quot;Arxiv&quot; bo&apos;limiga o&apos;tadi va kerak bo&apos;lsa qaytarib tiklash mumkin.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleting && deleteMutation.mutate(deleting.id)}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              O'chirish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -54,8 +54,12 @@ export default function ProductsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/products/${id}`),
     onSuccess: () => {
-      toast.success("Mahsulot o'chirildi");
+      toast.success("Mahsulot arxivga o'tkazildi");
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["archived-products"] });
+      // Omborlardagi qoldiq ko'rinishlari va bosh sahifa ham yangilanishi kerak.
+      queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
     onSettled: () => setDeleting(null),
@@ -73,6 +77,7 @@ export default function ProductsPage() {
             exportPath="/excel/products/export"
             exportFileName="mahsulotlar.xlsx"
             importPath="/excel/products/import"
+            templatePath="/excel/products/template"
             invalidateKey="products"
           />
           <Button
@@ -253,7 +258,8 @@ export default function ProductsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Mahsulotni o'chirish</AlertDialogTitle>
             <AlertDialogDescription>
-              &quot;{deleting?.name}&quot; mahsulotini o'chirmoqchimisiz? Bu amalni ortga qaytarib bo'lmaydi.
+              &quot;{deleting?.name}&quot; mahsulotini o'chirmoqchimisiz? Yozuv butunlay o'chmaydi -
+              &quot;Arxiv&quot; bo&apos;limiga o&apos;tadi va kerak bo&apos;lsa qaytarib tiklash mumkin.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

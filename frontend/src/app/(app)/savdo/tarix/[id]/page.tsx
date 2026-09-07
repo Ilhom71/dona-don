@@ -2,12 +2,23 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Truck, Wallet } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ArrowLeft, Ban, Truck, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Table,
   TableBody,
@@ -17,7 +28,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaymentFormDialog } from "@/components/payment-form-dialog";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { Sale, PaymentStatus } from "@/lib/types";
 import {
   formatDate,
@@ -28,19 +39,38 @@ import {
   paymentStatusLabels,
 } from "@/lib/format";
 
-const statusVariant: Record<PaymentStatus, "default" | "secondary" | "destructive"> = {
+const statusVariant: Record<PaymentStatus, "default" | "secondary" | "destructive" | "outline"> = {
   paid: "default",
   partial: "secondary",
   credit: "destructive",
+  cancelled: "outline",
 };
 
 export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
   const { id } = use(props.params);
+  const queryClient = useQueryClient();
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const { data: sale, isLoading } = useQuery({
     queryKey: ["sale", id],
     queryFn: () => api.get<Sale>(`/sales/${id}`),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => api.post(`/sales/${id}/cancel`, {}),
+    onSuccess: () => {
+      toast.success("Savdo bekor qilindi");
+      queryClient.invalidateQueries({ queryKey: ["sale", id] });
+      queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
+    onSettled: () => setCancelOpen(false),
   });
 
   if (isLoading || !sale) {
@@ -63,10 +93,36 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
         >
           <ArrowLeft className="h-4 w-4" /> Savdo tarixi
         </Link>
-        <Badge variant={statusVariant[sale.paymentStatus]}>
-          {paymentStatusLabels[sale.paymentStatus]}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant={statusVariant[sale.paymentStatus]}>
+            {paymentStatusLabels[sale.paymentStatus]}
+          </Badge>
+          {!sale.cancelledAt && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setCancelOpen(true)}
+            >
+              <Ban className="h-4 w-4" />
+              Bekor qilish
+            </Button>
+          )}
+        </div>
       </div>
+
+      {sale.cancelledAt && (
+        <Card className="border-destructive/40 bg-destructive/5">
+          <CardContent className="py-3 text-sm">
+            <p className="font-medium text-destructive">
+              Bu savdo {formatDateTime(sale.cancelledAt)} da bekor qilingan
+            </p>
+            {sale.cancelReason && (
+              <p className="text-muted-foreground">Sabab: {sale.cancelReason}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -118,6 +174,7 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
                 <TableHead>Miqdor</TableHead>
                 <TableHead>Narxi</TableHead>
                 <TableHead className="text-right">Jami</TableHead>
+                <TableHead className="text-right">Yuk puli</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -131,6 +188,9 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
                   <TableCell className="text-right">
                     {formatMoney(item.subtotal, sale.currency)}
                   </TableCell>
+                  <TableCell className="text-right">
+                    {Number(item.freightCostUzs) > 0 ? formatMoney(item.freightCostUzs) : "-"}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -141,7 +201,7 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle className="text-base">To'lovlar</CardTitle>
-          {remaining > 0 && (
+          {remaining > 0 && !sale.cancelledAt && (
             <Button size="sm" variant="outline" onClick={() => setPaymentOpen(true)}>
               <Wallet className="h-4 w-4" />
               To'lov qo'shish
@@ -176,6 +236,28 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
         open={paymentOpen}
         onOpenChange={setPaymentOpen}
       />
+
+      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Savdoni bekor qilish</AlertDialogTitle>
+            <AlertDialogDescription>
+              Bu savdo bekor qilinadi: sotilgan mahsulotlar omborga qaytariladi va holati
+              &quot;Bekor qilingan&quot; deb belgilanadi. Yozuv o&apos;zi o&apos;chirilmaydi (audit
+              tarixi saqlanadi). Davom etasizmi?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Yo'q</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => cancelMutation.mutate()}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Ha, bekor qilish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,7 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { createMovement, createTransfer, listMovements, listProductStock } from "./service";
+import {
+  createMovement,
+  createTransfer,
+  listMovements,
+  listProductStock,
+  cancelMovement,
+  restoreMovement,
+} from "./service";
 import { requireAuth } from "../../middleware/auth";
+
+const cancelSchema = z.object({ reason: z.string().nullable().optional() });
 
 const movementSchema = z.object({
   productId: z.string().uuid(),
@@ -50,6 +59,29 @@ stockRoutes.post("/movements", async (c) => {
   try {
     const movement = await createMovement(parsed.data);
     return c.json(movement, 201);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+stockRoutes.post("/movements/:id/cancel", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = cancelSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
+  }
+  try {
+    const movement = await cancelMovement(c.req.param("id"), parsed.data.reason);
+    return c.json(movement);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+stockRoutes.post("/movements/:id/restore", async (c) => {
+  try {
+    const movement = await restoreMovement(c.req.param("id"));
+    return c.json(movement);
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }

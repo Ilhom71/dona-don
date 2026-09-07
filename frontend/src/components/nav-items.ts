@@ -1,13 +1,12 @@
 import {
-  LayoutDashboard,
+  Archive,
   Package,
   ArrowLeftRight,
   ShoppingCart,
   History,
   Users,
-  Settings,
   Warehouse,
-  Boxes,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,14 +24,13 @@ export type NavGroup = {
 export const navGroups: NavGroup[] = [
   {
     title: "",
-    items: [{ label: "Bosh sahifa", href: "/", icon: LayoutDashboard }],
+    items: [{ label: "Kassa", href: "/", icon: Wallet }],
   },
   {
     title: "Ombor",
     items: [
       { label: "Mahsulotlar", href: "/ombor/mahsulotlar", icon: Package },
       { label: "Kirim-chiqim", href: "/ombor/kirim-chiqim", icon: ArrowLeftRight },
-      { label: "Qoldiqlar", href: "/ombor/qoldiqlar", icon: Boxes },
       { label: "Omborlar", href: "/ombor/omborlar", icon: Warehouse },
     ],
   },
@@ -46,12 +44,12 @@ export const navGroups: NavGroup[] = [
   },
   {
     title: "",
-    items: [{ label: "Sozlamalar", href: "/sozlamalar", icon: Settings }],
+    items: [{ label: "Arxiv", href: "/arxiv", icon: Archive }],
   },
 ];
 
 export const mobileQuickNav: NavItem[] = [
-  { label: "Bosh sahifa", href: "/", icon: LayoutDashboard },
+  { label: "Kassa", href: "/", icon: Wallet },
   { label: "Mahsulotlar", href: "/ombor/mahsulotlar", icon: Package },
   { label: "Savdo", href: "/savdo/yangi", icon: ShoppingCart },
   { label: "Hamkorlar", href: "/savdo/hamkorlar", icon: Users },

@@ -36,6 +36,69 @@
       "when": 1788613009415,
       "tag": "0004_public_clea",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788698790127,
+      "tag": "0005_glamorous_havok",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788703709142,
+      "tag": "0006_tidy_firelord",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788761159971,
+      "tag": "0007_quiet_toxin",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788762728150,
+      "tag": "0008_closed_jack_murdock",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788764222347,
+      "tag": "0009_flawless_jane_foster",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788764785509,
+      "tag": "0010_moaning_thunderbolt_ross",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788765875434,
+      "tag": "0011_worthless_wallop",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788770919540,
+      "tag": "0012_married_mentor",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788774942293,
+      "tag": "0013_new_loa",
+      "breakpoints": true
     }
   ]
 }

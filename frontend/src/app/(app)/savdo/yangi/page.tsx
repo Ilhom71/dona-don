@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { api, ApiError } from "@/lib/api";
 import type { Partner, Product, Sale, Warehouse, ProductStock } from "@/lib/types";
 import { formatMoney, formatQuantity, toDateInputValue } from "@/lib/format";
@@ -28,6 +29,8 @@ const itemSchema = z.object({
   productId: z.string().uuid("Mahsulot tanlang"),
   quantity: z.string().min(1, "Miqdor kiritilishi shart"),
   unitPrice: z.string().min(1, "Narx kiritilishi shart"),
+  // yuk puli (tashish xarajati) - ixtiyoriy, doim so'mda kiritiladi
+  freightCostUzs: z.string().optional(),
 });
 
 const schema = z.object({
@@ -58,6 +61,7 @@ function NewSaleForm() {
   const searchParams = useSearchParams();
   const initialProductId = searchParams.get("productId") ?? "";
   const initialPartnerId = searchParams.get("partnerId") ?? "";
+  const [partnerFormOpen, setPartnerFormOpen] = useState(false);
 
   const { data: partners } = useQuery({
     queryKey: ["partners"],
@@ -91,7 +95,7 @@ function NewSaleForm() {
       vehicleNumber: "",
       saleDate: toDateInputValue(new Date()),
       currency: "UZS",
-      items: [{ productId: initialProductId, quantity: "", unitPrice: "" }],
+      items: [{ productId: initialProductId, quantity: "", unitPrice: "", freightCostUzs: "" }],
       initialPayment: "",
       paymentMethod: "cash",
       notes: "",
@@ -145,6 +149,11 @@ function NewSaleForm() {
     }, 0);
   }, [items]);
 
+  // Barcha qatorlar bo'yicha yuk puli yig'indisi (doim so'mda, hisobot uchun)
+  const freightTotal = useMemo(() => {
+    return items.reduce((sum, item) => sum + (Number(item.freightCostUzs) || 0), 0);
+  }, [items]);
+
   const mutation = useMutation({
     mutationFn: (values: FormValues) =>
       api.post<Sale>("/sales", {
@@ -157,6 +166,7 @@ function NewSaleForm() {
           productId: i.productId,
           quantity: Number(i.quantity),
           unitPrice: Number(i.unitPrice),
+          freightCostUzs: i.freightCostUzs ? Number(i.freightCostUzs) : null,
         })),
         initialPayment: values.initialPayment ? Number(values.initialPayment) : null,
         paymentMethod: values.paymentMethod,
@@ -167,6 +177,7 @@ function NewSaleForm() {
       queryClient.invalidateQueries({ queryKey: ["sales"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
       router.push(`/savdo/tarix/${sale.id}`);
@@ -189,28 +200,39 @@ function NewSaleForm() {
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Hamkor (mijoz)</Label>
-              <Controller
-                control={control}
-                name="partnerId"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={partners?.map((p) => ({ value: p.id, label: p.name })) ?? []}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Hamkorni tanlang" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {partners?.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
+              <div className="flex gap-2">
+                <Controller
+                  control={control}
+                  name="partnerId"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={partners?.map((p) => ({ value: p.id, label: p.name })) ?? []}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Hamkorni tanlang" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {partners?.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Yangi hamkor qo'shish"
+                  onClick={() => setPartnerFormOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
               {errors.partnerId && (
                 <p className="text-sm text-destructive">{errors.partnerId.message}</p>
               )}
@@ -292,7 +314,9 @@ function NewSaleForm() {
               type="button"
               size="sm"
               variant="outline"
-              onClick={() => append({ productId: "", quantity: "", unitPrice: "" })}
+              onClick={() =>
+                append({ productId: "", quantity: "", unitPrice: "", freightCostUzs: "" })
+              }
             >
               <Plus className="h-4 w-4" />
               Qator qo'shish
@@ -363,7 +387,7 @@ function NewSaleForm() {
                       </Button>
                     </div>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <div className="space-y-2">
                       <Label>
                         Miqdor {selectedProduct && `(${selectedProduct.unit === "ton" ? "t" : "kg"})`}
@@ -374,19 +398,38 @@ function NewSaleForm() {
                       <Label>Narxi (1 birlik uchun)</Label>
                       <Input type="number" step="any" {...register(`items.${index}.unitPrice`)} />
                     </div>
+                    <div className="space-y-2">
+                      <Label>Yuk puli (so&apos;m)</Label>
+                      <Input
+                        type="number"
+                        step="any"
+                        placeholder="0"
+                        {...register(`items.${index}.freightCostUzs`)}
+                      />
+                    </div>
                   </div>
                   {qty > 0 && price > 0 && (
                     <p className="mt-2 text-right text-sm text-muted-foreground">
                       Jami: {formatMoney(qty * price, currency)}
+                      {Number(items[index]?.freightCostUzs) > 0 &&
+                        ` + ${formatMoney(items[index]?.freightCostUzs ?? 0)} (yuk puli)`}
                     </p>
                   )}
                 </div>
               );
             })}
 
-            <div className="flex items-center justify-between border-t pt-3 text-base font-semibold">
-              <span>Umumiy summa</span>
-              <span>{formatMoney(total, currency)}</span>
+            <div className="border-t pt-3 space-y-1">
+              <div className="flex items-center justify-between text-base font-semibold">
+                <span>Umumiy summa (mahsulotlar)</span>
+                <span>{formatMoney(total, currency)}</span>
+              </div>
+              {freightTotal > 0 && (
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                  <span>Yuk puli jami</span>
+                  <span>{formatMoney(freightTotal)}</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -444,6 +487,14 @@ function NewSaleForm() {
           {mutation.isPending ? "Saqlanmoqda..." : "Savdoni saqlash"}
         </Button>
       </form>
+
+      {/* Ro'yxatda yo'q yangi mijoz bo'lsa, shu yerdan chiqmasdan qo'shish
+          mumkin - qo'shilgach avtomatik tanlanadi. */}
+      <PartnerFormDialog
+        open={partnerFormOpen}
+        onOpenChange={setPartnerFormOpen}
+        onCreated={(p) => setValue("partnerId", p.id)}
+      />
     </div>
   );
 }

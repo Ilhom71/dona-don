@@ -8,10 +8,13 @@ import { warehouseRoutes } from "./modules/warehouses/routes";
 import { partnerRoutes } from "./modules/partners/routes";
 import { stockRoutes } from "./modules/stock/routes";
 import { saleRoutes } from "./modules/sales/routes";
+import { purchaseRoutes } from "./modules/purchases/routes";
 import { paymentRoutes } from "./modules/payments/routes";
 import { settingsRoutes } from "./modules/settings/routes";
 import { reportRoutes } from "./modules/reports/routes";
 import { excelRoutes } from "./modules/excel/routes";
+import { cashRoutes } from "./modules/cash/routes";
+import { expenseRoutes } from "./modules/expenses/routes";
 
 const app = new Hono();
 
@@ -35,10 +38,13 @@ app.route("/warehouses", warehouseRoutes);
 app.route("/partners", partnerRoutes);
 app.route("/stock", stockRoutes);
 app.route("/sales", saleRoutes);
+app.route("/purchases", purchaseRoutes);
 app.route("/payments", paymentRoutes);
 app.route("/settings", settingsRoutes);
 app.route("/reports", reportRoutes);
 app.route("/excel", excelRoutes);
+app.route("/cash", cashRoutes);
+app.route("/expenses", expenseRoutes);
 
 app.onError((err, c) => {
   console.error(err);

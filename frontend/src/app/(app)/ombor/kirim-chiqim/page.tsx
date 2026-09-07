@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Ban } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,20 +24,70 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { MovementFormDialog } from "@/components/movement-form-dialog";
 import { TransferFormDialog } from "@/components/transfer-form-dialog";
 import { ExcelActions } from "@/components/excel-actions";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { StockMovement, Product, Warehouse } from "@/lib/types";
 import { formatDateTime, formatMoney, formatQuantity, movementTypeLabels } from "@/lib/format";
 
+// Kelib chiqqan manbaga qarab bekor qilish endpointini tanlaydi. "manual"
+// (qo'lda kiritilgan) o'zining yozuvini bekor qiladi; "sale"/"purchase"
+// manbali yozuvlar butun savdo/xaridni bekor qiladi (bir nechta qatorga
+// bo'lingan bo'lsa ham, birortasini bosish barchasini bekor qiladi).
+// "sale_reversal"/"purchase_reversal"/"transfer" - bular allaqachon bekor
+// qilingan operatsiyaning o'zi yoki hali qo'llab-quvvatlanmagan, tugma yo'q.
+function cancelPathFor(m: StockMovement) {
+  if (m.source === "manual") return `/stock/movements/${m.id}/cancel`;
+  if (m.source === "purchase" && m.purchaseId) return `/purchases/${m.purchaseId}/cancel`;
+  if (m.source === "sale" && m.saleId) return `/sales/${m.saleId}/cancel`;
+  return null;
+}
+
 export default function StockMovementsPage() {
+  const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
-  const [defaultType, setDefaultType] = useState<"in" | "out">("in");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [productFilter, setProductFilter] = useState<string>("all");
   const [warehouseFilter, setWarehouseFilter] = useState<string>("all");
+  const [cancelTarget, setCancelTarget] = useState<StockMovement | null>(null);
+
+  const cancelMutation = useMutation({
+    mutationFn: (m: StockMovement) => {
+      const path = cancelPathFor(m);
+      if (!path) throw new Error("Bu yozuvni bekor qilib bo'lmaydi");
+      return api.post(path, {});
+    },
+    onSuccess: () => {
+      toast.success("Bekor qilindi");
+      queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-summary"] });
+      // Agar bu savdo manbali yozuv bo'lsa, savdo ro'yxatlari ham yangilanishi kerak.
+      queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["kassa-sales"] });
+      queryClient.invalidateQueries({ queryKey: ["cancelled-sales"] });
+      queryClient.invalidateQueries({ queryKey: ["accounting-report"] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
+    onSettled: () => setCancelTarget(null),
+  });
 
   const { data: products } = useQuery({
     queryKey: ["products"],
@@ -57,6 +109,9 @@ export default function StockMovementsPage() {
       return api.get<StockMovement[]>(`/stock/movements${qs ? `?${qs}` : ""}`);
     },
   });
+  // Bekor qilingan yozuvlar bu ro'yxatda ko'rinmaydi - Arxivning "Bekor
+  // qilingan ombor amaliyotlari" qismida ko'rinadi.
+  const visibleData = (data ?? []).filter((m) => !m.cancelled);
 
   const productName = (id: string) => products?.find((p) => p.id === id)?.name ?? "-";
   const productUnit = (id: string) => products?.find((p) => p.id === id)?.unit ?? "kg";
@@ -75,25 +130,11 @@ export default function StockMovementsPage() {
             exportPath="/excel/stock-movements/export"
             exportFileName="kirim-chiqim.xlsx"
           />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setDefaultType("in");
-              setFormOpen(true);
-            }}
-          >
+          <Link href="/ombor/kirim" className={buttonVariants({ variant: "outline", size: "sm" })}>
             <ArrowDownToLine className="h-4 w-4" />
             Kirim
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setDefaultType("out");
-              setFormOpen(true);
-            }}
-          >
+          </Link>
+          <Button size="sm" variant="outline" onClick={() => setFormOpen(true)}>
             <ArrowUpFromLine className="h-4 w-4" />
             Chiqim
           </Button>
@@ -167,7 +208,7 @@ export default function StockMovementsPage() {
 
       {isLoading ? (
         <Skeleton className="h-64" />
-      ) : !data || data.length === 0 ? (
+      ) : visibleData.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             Hozircha yozuv yo'q
@@ -188,10 +229,11 @@ export default function StockMovementsPage() {
                   <TableHead>Narxi</TableHead>
                   <TableHead className="text-right">Umumiy</TableHead>
                   <TableHead>Izoh</TableHead>
+                  <TableHead className="w-16"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((m) => (
+                {visibleData.map((m) => (
                   <TableRow key={m.id}>
                     <TableCell>{formatDateTime(m.movementDate)}</TableCell>
                     <TableCell>
@@ -214,6 +256,18 @@ export default function StockMovementsPage() {
                     <TableCell className="max-w-48 truncate text-muted-foreground">
                       {m.note ?? "-"}
                     </TableCell>
+                    <TableCell>
+                      {cancelPathFor(m) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Bekor qilish"
+                          onClick={() => setCancelTarget(m)}
+                        >
+                          <Ban className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -221,7 +275,7 @@ export default function StockMovementsPage() {
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {data.map((m) => (
+            {visibleData.map((m) => (
               <Card key={m.id}>
                 <CardContent className="space-y-1 py-3">
                   <div className="flex items-center justify-between">
@@ -242,6 +296,13 @@ export default function StockMovementsPage() {
                         .join(" · ")}
                     </span>
                   </div>
+                  {cancelPathFor(m) && (
+                    <div className="flex justify-end border-t pt-1">
+                      <Button variant="ghost" size="icon" onClick={() => setCancelTarget(m)}>
+                        <Ban className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -249,8 +310,37 @@ export default function StockMovementsPage() {
         </>
       )}
 
-      <MovementFormDialog open={formOpen} onOpenChange={setFormOpen} defaultType={defaultType} />
+      <MovementFormDialog open={formOpen} onOpenChange={setFormOpen} defaultType="out" />
       <TransferFormDialog open={transferOpen} onOpenChange={setTransferOpen} />
+
+      <AlertDialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Yozuvni bekor qilish</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget?.source === "purchase"
+                ? "Bu yozuv bir xaridning qismi - butun xarid bekor qilinadi, sotib olingan barcha mahsulotlar ombordan ayiriladi."
+                : cancelTarget?.source === "sale"
+                  ? "Bu yozuv bir savdoning qismi - butun savdo bekor qilinadi, sotilgan mahsulotlar ombordan qaytariladi."
+                  : "Bu yozuvni bekor qilmoqchimisiz? Ombor qoldig'i teskari yo'nalishda qaytariladi."}{" "}
+              Yozuv o&apos;zi o&apos;chirilmaydi - Arxiv bo&apos;limidan{" "}
+              {cancelTarget?.source === "manual"
+                ? "\"Tiklash\" bilan qaytarish"
+                : "ko'rish"}{" "}
+              mumkin.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Yo'q</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => cancelTarget && cancelMutation.mutate(cancelTarget)}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Ha, bekor qilish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

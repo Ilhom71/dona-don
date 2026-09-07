@@ -1,0 +1,4 @@
+# Shell skriptlar har doim LF (Unix) qator oxiri bilan saqlansin - aks holda
+# Windows'da tahrirlansa CRLF qo'shilib, Linux serverda "bad interpreter"
+# xatosi bilan ishlamay qolishi mumkin (masalan deploy/update.sh).
+*.sh text eol=lf

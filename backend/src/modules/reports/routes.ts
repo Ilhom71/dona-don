@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getDashboardSummary, getProfitReport } from "./service";
+import { getDashboardSummary, getProfitReport, getAccountingReport } from "./service";
 import { requireAuth } from "../../middleware/auth";
 
 export const reportRoutes = new Hono();
@@ -14,4 +14,13 @@ reportRoutes.get("/profit", async (c) => {
   const fromDate = from ? new Date(from) : new Date(new Date().setDate(1));
   const toDate = to ? new Date(to) : new Date();
   return c.json(await getProfitReport(fromDate, toDate));
+});
+
+// Buxgalteriya hisoboti (daromad, tannarx, foyda-zarar, xarajatlar, naqd pul
+// oqimi) - Kassa sahifasida "qozon tagida nima bor" ko'rinishi uchun.
+reportRoutes.get("/accounting", async (c) => {
+  const { from, to } = c.req.query();
+  const fromDate = from ? new Date(from) : new Date(new Date().setDate(1));
+  const toDate = to ? new Date(to) : new Date();
+  return c.json(await getAccountingReport(fromDate, toDate));
 });

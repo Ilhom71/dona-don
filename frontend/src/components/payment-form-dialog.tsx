@@ -66,6 +66,7 @@ export function PaymentFormDialog({
     onSuccess: () => {
       toast.success("To'lov qayd etildi");
       queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["sales"] });
       queryClient.invalidateQueries({ queryKey: ["sale", saleId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });

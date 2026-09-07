@@ -23,18 +23,29 @@ export const movementTypeEnum = pgEnum("movement_type", ["in", "out"]); // kirim
 export const movementSourceEnum = pgEnum("movement_source", [
   "manual", // qo'lda kiritilgan kirim/chiqim
   "purchase", // hamkordan don sotib olish (kirim)
+  "purchase_reversal", // bekor qilingan xarid uchun mahsulotni ombordan ayirish (chiqim)
   "sale", // savdo orqali avtomatik chiqim
+  "sale_reversal", // bekor qilingan savdo uchun mahsulotni omborga qaytarish (kirim)
   "transfer", // omborlar orasida ko'chirish
 ]);
 export const paymentStatusEnum = pgEnum("payment_status", [
   "paid", // to'liq to'langan
   "partial", // qisman to'langan
   "credit", // nasiya (to'lanmagan)
+  "cancelled", // savdo bekor qilingan (storno)
 ]);
 export const paymentMethodEnum = pgEnum("payment_method", [
   "cash",
   "card",
   "bank",
+]);
+export const expenseCategoryEnum = pgEnum("expense_category", [
+  "supplier_payment", // yetkazib beruvchiga to'lov (qarz kamayadi)
+  "salary", // ish haqi
+  "rent", // ijara
+  "transport", // transport/yoqilg'i
+  "utilities", // kommunal xizmatlar
+  "other", // boshqa
 ]);
 
 // ---------- Users (bitta admin foydalanuvchi) ----------
@@ -74,6 +85,10 @@ export const products = pgTable("products", {
   // standart sotuv narxi (UZS) - yangi savdo yaratganda taklif sifatida ishlatiladi
   sellingPriceUzs: numeric("selling_price_uzs", { precision: 14, scale: 2 }),
   notes: text("notes"),
+  // "O'chirish" bosilganda yozuv o'chirilmaydi, shu maydon to'ldiriladi (arxiv)
+  // - tarixiy yozuvlar (savdo/xarid/kirim-chiqim)dagi bog'lanish buzilmasin
+  // uchun. Arxiv sahifasidan "Tiklash" bilan yana faollashtiriladi.
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -84,6 +99,7 @@ export const warehouses = pgTable("warehouses", {
   name: varchar("name", { length: 128 }).notNull(),
   address: text("address"),
   notes: text("notes"),
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -115,6 +131,7 @@ export const partners = pgTable("partners", {
   address: text("address"),
   type: partnerTypeEnum("type").notNull().default("customer"),
   notes: text("notes"),
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -151,6 +168,10 @@ export const sales = pgTable(
       .notNull()
       .default("credit"),
     notes: text("notes"),
+    // Savdo bekor qilinsa (storno), yozuv o'chirilmaydi/tahrirlanmaydi - faqat
+    // shu ikki maydon to'ldiriladi va omborga teskari (kirim) yozuv qo'shiladi.
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -176,8 +197,87 @@ export const saleItems = pgTable(
       precision: 14,
       scale: 2,
     }).notNull(),
+    // yuk puli (tashish xarajati) - har bir mahsulot qatori uchun alohida,
+    // doim UZS'da saqlanadi va hamkorning umumiy qarziga (totalAmountUzs) qo'shiladi
+    freightCostUzs: numeric("freight_cost_uzs", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
   },
   (t) => [index("sale_items_sale_idx").on(t.saleId)]
+);
+
+// ---------- Purchases (xaridlar - yetkazib beruvchidan omborga kirim) ----------
+// sales/sale_items'ga parallel struktura: hamkor (yetkazib beruvchi) tanlanadi,
+// bir nechta mahsulot qatori kiritiladi, jami summa avtomatik hisoblanadi.
+export const purchases = pgTable(
+  "purchases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    partnerId: uuid("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "restrict" }),
+    warehouseId: uuid("warehouse_id").references(() => warehouses.id, {
+      onDelete: "restrict",
+    }),
+    vehicleNumber: varchar("vehicle_number", { length: 32 }), // mashina raqami
+    purchaseDate: timestamp("purchase_date").defaultNow().notNull(),
+    currency: currencyEnum("currency").notNull().default("UZS"),
+    // xarid vaqtidagi kurs (hisobot uchun UZSga o'girishda ishlatiladi)
+    exchangeRateSnapshot: numeric("exchange_rate_snapshot", {
+      precision: 14,
+      scale: 4,
+    }).notNull(),
+    totalAmount: numeric("total_amount", { precision: 16, scale: 2 })
+      .notNull()
+      .default("0"),
+    // mahsulotlar summasi (UZS) + yuk puli yig'indisi
+    totalAmountUzs: numeric("total_amount_uzs", { precision: 16, scale: 2 })
+      .notNull()
+      .default("0"),
+    paidAmountUzs: numeric("paid_amount_uzs", { precision: 16, scale: 2 })
+      .notNull()
+      .default("0"),
+    paymentStatus: paymentStatusEnum("payment_status")
+      .notNull()
+      .default("credit"),
+    notes: text("notes"),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("purchases_partner_idx").on(t.partnerId),
+    index("purchases_date_idx").on(t.purchaseDate),
+  ]
+);
+
+// ---------- Purchase items (xarid tarkibidagi mahsulotlar) ----------
+export const purchaseItems = pgTable(
+  "purchase_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    purchaseId: uuid("purchase_id")
+      .notNull()
+      .references(() => purchases.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "restrict" }),
+    quantity: numeric("quantity", { precision: 14, scale: 3 }).notNull(),
+    unitPrice: numeric("unit_price", { precision: 14, scale: 2 }).notNull(),
+    subtotal: numeric("subtotal", { precision: 16, scale: 2 }).notNull(),
+    // yuk puli (tashish xarajati) - har bir mahsulot qatori uchun alohida, doim UZS
+    freightCostUzs: numeric("freight_cost_uzs", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    // (subtotal_uzs + freightCostUzs) / quantity - omborga kirim qilingan
+    // haqiqiy birlik tannarxi (landed cost), avgCostUzs shu qiymat bilan yangilanadi
+    landedCostUzsSnapshot: numeric("landed_cost_uzs_snapshot", {
+      precision: 14,
+      scale: 2,
+    }).notNull(),
+  },
+  (t) => [index("purchase_items_purchase_idx").on(t.purchaseId)]
 );
 
 // ---------- Stock movements (ombor kirim-chiqim) ----------
@@ -203,6 +303,9 @@ export const stockMovements = pgTable(
     saleId: uuid("sale_id").references(() => sales.id, {
       onDelete: "set null",
     }),
+    purchaseId: uuid("purchase_id").references(() => purchases.id, {
+      onDelete: "set null",
+    }),
     warehouseId: uuid("warehouse_id").references(() => warehouses.id, {
       onDelete: "set null",
     }),
@@ -210,6 +313,11 @@ export const stockMovements = pgTable(
     transferGroupId: uuid("transfer_group_id"),
     vehicleNumber: varchar("vehicle_number", { length: 32 }), // mashina raqami (kirim/chiqim yetkazuvi)
     note: text("note"),
+    // Faqat "manual" (qo'lda kiritilgan) yozuvlar uchun bekor qilish - yozuv
+    // o'chirilmaydi, faqat qoldiq teskari qaytariladi. "sale"/"purchase" kabi
+    // avtomatik yozuvlar o'z manba yozuvi (savdo/xarid) orqali bekor qilinadi.
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
     movementDate: timestamp("movement_date").defaultNow().notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -240,20 +348,106 @@ export const payments = pgTable(
     method: paymentMethodEnum("method").notNull().default("cash"),
     paymentDate: timestamp("payment_date").defaultNow().notNull(),
     notes: text("notes"),
+    // To'lov bekor qilinsa, yozuv o'chirilmaydi - shu ikki maydon to'ldiriladi
+    // (immutable ledger), bog'liq savdoning paidAmountUzs/holati qayta
+    // hisoblanadi. Arxiv sahifasidan "Tiklash" bilan qaytariladi.
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("payments_partner_idx").on(t.partnerId), index("payments_sale_idx").on(t.saleId)]
 );
 
+// ---------- Expenses (kassadan chiqim: xarajatlar, yetkazib beruvchiga to'lov) ----------
+// `payments` faqat mijozdan kelgan pulni (kirim) qayd etadi; kassaning to'liq
+// balansini ko'rish uchun chiqim tomoni shu jadvalda alohida saqlanadi.
+export const expenses = pgTable(
+  "expenses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    category: expenseCategoryEnum("category").notNull().default("other"),
+    // "supplier_payment" kategoriyasida qaysi hamkorga to'langani (ixtiyoriy, boshqalarida bo'sh)
+    partnerId: uuid("partner_id").references(() => partners.id, { onDelete: "set null" }),
+    amount: numeric("amount", { precision: 16, scale: 2 }).notNull(),
+    currency: currencyEnum("currency").notNull().default("UZS"),
+    exchangeRateSnapshot: numeric("exchange_rate_snapshot", {
+      precision: 14,
+      scale: 4,
+    }).notNull(),
+    amountUzs: numeric("amount_uzs", { precision: 16, scale: 2 }).notNull(),
+    method: paymentMethodEnum("method").notNull().default("cash"),
+    description: text("description").notNull(),
+    expenseDate: timestamp("expense_date").defaultNow().notNull(),
+    // Xarajat bekor qilinsa, yozuv o'chirilmaydi - shu ikki maydon to'ldiriladi
+    // (immutable ledger). Arxiv sahifasidan "Tiklash" bilan qaytariladi.
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("expenses_date_idx").on(t.expenseDate),
+    index("expenses_category_idx").on(t.category),
+  ]
+);
+
+// Qaysi "hisob"ga tegishli: "kassa" - kunlik naqd savdo kassasi,
+// "buxgalteriya" - firmaning joriy hisobi (rasmiy, kassadan o'tkazma orqali
+// to'ldiriladi). Ikkalasi bir xil jadvalda, faqat shu ustun bilan ajratiladi.
+export const cashAccountEnum = pgEnum("cash_account", ["kassa", "buxgalteriya"]);
+
+// ---------- Cash transactions (kassaga qo'lda kiritilgan kirim/chiqim) ----------
+// Savdo to'lovi (`payments`) yoki xarajat (`expenses`) bilan bog'liq bo'lmagan,
+// kassadan qo'lda pul kiritish/chiqarish uchun (masalan egasi naqd pul qo'shdi
+// yoki kassadan shaxsiy ehtiyoj uchun naqd oldi) - har doim izoh bilan.
+export const cashTransactions = pgTable(
+  "cash_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    direction: movementTypeEnum("direction").notNull(), // "in" yoki "out" (mavjud enum qayta ishlatiladi)
+    // Qaysi hisob (kassa/buxgalteriya) - standart "kassa" (eski yozuvlar ham
+    // shu hisobga tegishli deb hisoblanadi).
+    account: cashAccountEnum("account").notNull().default("kassa"),
+    // Qaysi hamkor bilan bog'liqligi (ixtiyoriy) - masalan hamkordan naqd
+    // qarz olindi/berildi kabi holatlar uchun.
+    partnerId: uuid("partner_id").references(() => partners.id, { onDelete: "set null" }),
+    amountUzs: numeric("amount_uzs", { precision: 16, scale: 2 }).notNull(),
+    note: text("note").notNull(),
+    // Yozuv bekor qilinsa, o'chirilmaydi - shu ikki maydon to'ldiriladi
+    // (immutable ledger). Arxiv sahifasidan "Tiklash" bilan qaytariladi.
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    // Kassadan buxgalteriyaga o'tkazmada bitta amalda 2 ta bog'liq yozuv
+    // yaratiladi (kassadan chiqim + buxgalteriyaga kirim) - shu ustun ular
+    // orasidagi bog'lanish, `stock_movements.transfer_group_id`ga parallel.
+    // Bittasi bekor qilinganda ikkinchisi ham avtomatik bekor qilinadi
+    // (aks holda ikki hisob orasida qoldiq mos kelmay qoladi).
+    transferGroupId: uuid("transfer_group_id"),
+    transactionDate: timestamp("transaction_date").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("cash_transactions_date_idx").on(t.transactionDate)]
+);
+
 // ---------- Relations ----------
 export const partnersRelations = relations(partners, ({ many }) => ({
   sales: many(sales),
+  purchases: many(purchases),
   payments: many(payments),
   stockMovements: many(stockMovements),
+  expenses: many(expenses),
+  cashTransactions: many(cashTransactions),
+}));
+
+export const cashTransactionsRelations = relations(cashTransactions, ({ one }) => ({
+  partner: one(partners, {
+    fields: [cashTransactions.partnerId],
+    references: [partners.id],
+  }),
 }));
 
 export const productsRelations = relations(products, ({ many }) => ({
   saleItems: many(saleItems),
+  purchaseItems: many(purchaseItems),
   stockMovements: many(stockMovements),
   stock: many(productStock),
 }));
@@ -262,6 +456,7 @@ export const warehousesRelations = relations(warehouses, ({ many }) => ({
   stock: many(productStock),
   stockMovements: many(stockMovements),
   sales: many(sales),
+  purchases: many(purchases),
 }));
 
 export const productStockRelations = relations(productStock, ({ one }) => ({
@@ -296,6 +491,29 @@ export const saleItemsRelations = relations(saleItems, ({ one }) => ({
   }),
 }));
 
+export const purchasesRelations = relations(purchases, ({ one, many }) => ({
+  partner: one(partners, {
+    fields: [purchases.partnerId],
+    references: [partners.id],
+  }),
+  warehouse: one(warehouses, {
+    fields: [purchases.warehouseId],
+    references: [warehouses.id],
+  }),
+  items: many(purchaseItems),
+}));
+
+export const purchaseItemsRelations = relations(purchaseItems, ({ one }) => ({
+  purchase: one(purchases, {
+    fields: [purchaseItems.purchaseId],
+    references: [purchases.id],
+  }),
+  product: one(products, {
+    fields: [purchaseItems.productId],
+    references: [products.id],
+  }),
+}));
+
 export const stockMovementsRelations = relations(stockMovements, ({ one }) => ({
   product: one(products, {
     fields: [stockMovements.productId],
@@ -306,6 +524,10 @@ export const stockMovementsRelations = relations(stockMovements, ({ one }) => ({
     references: [partners.id],
   }),
   sale: one(sales, { fields: [stockMovements.saleId], references: [sales.id] }),
+  purchase: one(purchases, {
+    fields: [stockMovements.purchaseId],
+    references: [purchases.id],
+  }),
   warehouse: one(warehouses, {
     fields: [stockMovements.warehouseId],
     references: [warehouses.id],
@@ -318,4 +540,11 @@ export const paymentsRelations = relations(payments, ({ one }) => ({
     references: [partners.id],
   }),
   sale: one(sales, { fields: [payments.saleId], references: [sales.id] }),
+}));
+
+export const expensesRelations = relations(expenses, ({ one }) => ({
+  partner: one(partners, {
+    fields: [expenses.partnerId],
+    references: [partners.id],
+  }),
 }));

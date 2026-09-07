@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {
   listWarehouses,
+  listArchivedWarehouses,
   getWarehouse,
   createWarehouse,
   updateWarehouse,
   deleteWarehouse,
+  restoreWarehouse,
 } from "./service";
 import { requireAuth } from "../../middleware/auth";
 
@@ -20,6 +22,12 @@ warehouseRoutes.use("*", requireAuth);
 
 warehouseRoutes.get("/", async (c) => {
   return c.json(await listWarehouses());
+});
+
+// "/:id" dan oldin ro'yxatdan o'tkazilishi shart, aks holda "archived" ":id"
+// sifatida ushlanib qoladi.
+warehouseRoutes.get("/archived", async (c) => {
+  return c.json(await listArchivedWarehouses());
 });
 
 warehouseRoutes.get("/:id", async (c) => {
@@ -52,4 +60,10 @@ warehouseRoutes.put("/:id", async (c) => {
 warehouseRoutes.delete("/:id", async (c) => {
   await deleteWarehouse(c.req.param("id"));
   return c.json({ ok: true });
+});
+
+warehouseRoutes.post("/:id/restore", async (c) => {
+  const warehouse = await restoreWarehouse(c.req.param("id"));
+  if (!warehouse) return c.json({ error: "Ombor topilmadi" }, 404);
+  return c.json(warehouse);
 });

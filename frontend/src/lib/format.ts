@@ -1,4 +1,4 @@
-import type { Currency, Unit } from "./types";
+import type { Currency, ExpenseCategory, Unit } from "./types";
 
 const uzsFormatter = new Intl.NumberFormat("uz-UZ", {
   maximumFractionDigits: 0,
@@ -69,10 +69,25 @@ export const paymentStatusLabels: Record<string, string> = {
   paid: "To'liq to'langan",
   partial: "Qisman to'langan",
   credit: "Nasiya",
+  cancelled: "Bekor qilingan",
 };
 
 export const paymentMethodLabels: Record<string, string> = {
   cash: "Naqd",
   card: "Karta",
   bank: "Bank o'tkazmasi",
+};
+
+export const expenseCategoryLabels: Record<ExpenseCategory, string> = {
+  supplier_payment: "Yetkazib beruvchiga to'lov",
+  salary: "Ish haqi",
+  rent: "Ijara",
+  transport: "Transport",
+  utilities: "Kommunal xizmatlar",
+  other: "Boshqa",
+};
+
+export const cashDirectionLabels: Record<string, string> = {
+  in: "Kirim",
+  out: "Chiqim",
 };

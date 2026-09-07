@@ -1,0 +1,1 @@
+ALTER TABLE "cash_transactions" ADD COLUMN "transfer_group_id" uuid;

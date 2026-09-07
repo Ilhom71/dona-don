@@ -4,7 +4,12 @@ import { products, sales, saleItems, stockMovements, payments } from "../../db/s
 import { getCurrentRate } from "../settings/service";
 import { adjustWarehouseStock, recomputeProductAggregate } from "../stock/service";
 
-type SaleItemInput = { productId: string; quantity: number; unitPrice: number };
+type SaleItemInput = {
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  freightCostUzs?: number | null; // yuk puli (tashish xarajati), doim UZS, ixtiyoriy
+};
 
 type CreateSaleInput = {
   partnerId: string;
@@ -35,7 +40,8 @@ export async function createSale(input: CreateSaleInput) {
   const rate = await getCurrentRate();
 
   return db.transaction(async (tx) => {
-    let totalAmount = 0;
+    let totalAmount = 0; // mahsulotlar summasi, savdo valyutasida (yuk pulisiz)
+    let freightTotalUzs = 0; // barcha qatorlar bo'yicha yuk puli yig'indisi (doim UZS)
 
     const itemRows: {
       productId: string;
@@ -43,6 +49,7 @@ export async function createSale(input: CreateSaleInput) {
       unitPrice: string;
       subtotal: string;
       costPriceUzsSnapshot: string;
+      freightCostUzs: string;
     }[] = [];
 
     for (const item of input.items) {
@@ -65,7 +72,9 @@ export async function createSale(input: CreateSaleInput) {
       }
 
       const subtotal = item.quantity * item.unitPrice;
+      const freightCostUzs = item.freightCostUzs ?? 0;
       totalAmount += subtotal;
+      freightTotalUzs += freightCostUzs;
 
       itemRows.push({
         productId: item.productId,
@@ -73,12 +82,14 @@ export async function createSale(input: CreateSaleInput) {
         unitPrice: String(item.unitPrice),
         subtotal: String(subtotal),
         costPriceUzsSnapshot: costSnapshot,
+        freightCostUzs: String(freightCostUzs),
       });
 
       await recomputeProductAggregate(tx, item.productId);
     }
 
-    const totalAmountUzs = input.currency === "USD" ? totalAmount * rate : totalAmount;
+    // Umumiy qarz (totalAmountUzs) = mahsulotlar summasi (UZS'ga o'girilgan) + yuk puli yig'indisi.
+    const totalAmountUzs = (input.currency === "USD" ? totalAmount * rate : totalAmount) + freightTotalUzs;
     const initialPayment = input.initialPayment ?? 0;
     const paidAmountUzs = input.currency === "USD" ? initialPayment * rate : initialPayment;
 
@@ -136,9 +147,74 @@ export async function createSale(input: CreateSaleInput) {
   });
 }
 
+/**
+ * Savdoni bekor qiladi (storno). Loyihadagi "immutable ledger" qoidasiga ko'ra
+ * savdo/mahsulot yozuvlari o'chirilmaydi yoki tahrirlanmaydi - shuning uchun bu
+ * funksiya sale_items/sales'ni o'zgartirmaydi, faqat:
+ *  1) har bir mahsulot uchun omborga teskari (kirim, source="sale_reversal")
+ *     yozuv qo'shib, mahsulotni qaytaradi (xuddi shu tannarx bilan - shunda
+ *     og'irlikli o'rtacha tannarx o'zgarmay saqlanadi),
+ *  2) sales jadvalida faqat cancelledAt/cancelReason/paymentStatus maydonlarini
+ *     to'ldiradi (bu holat belgisi, moliyaviy summalar tegilmaydi).
+ * Bekor qilingan savdo hisobot/balans so'rovlaridan chiqarib tashlanadi.
+ */
+export async function cancelSale(id: string, reason?: string | null) {
+  return db.transaction(async (tx) => {
+    const sale = await tx.query.sales.findFirst({
+      where: eq(sales.id, id),
+      with: { items: { with: { product: true } } },
+    });
+    if (!sale) throw new Error("Savdo topilmadi");
+    if (sale.cancelledAt) throw new Error("Bu savdo allaqachon bekor qilingan");
+    if (!sale.warehouseId) throw new Error("Savdoning ombori aniqlanmagan, bekor qilib bo'lmaydi");
+
+    const rate = await getCurrentRate();
+
+    for (const item of sale.items ?? []) {
+      await adjustWarehouseStock(tx, {
+        productId: item.productId,
+        warehouseId: sale.warehouseId,
+        type: "in",
+        quantity: Number(item.quantity),
+        priceUzs: Number(item.costPriceUzsSnapshot),
+        unitLabel: item.product?.unit ?? "kg",
+      });
+      await recomputeProductAggregate(tx, item.productId);
+
+      await tx.insert(stockMovements).values({
+        productId: item.productId,
+        type: "in",
+        source: "sale_reversal",
+        quantity: item.quantity,
+        pricePerUnit: item.costPriceUzsSnapshot,
+        currency: "UZS",
+        exchangeRateSnapshot: String(rate),
+        partnerId: sale.partnerId,
+        warehouseId: sale.warehouseId,
+        saleId: sale.id,
+        vehicleNumber: sale.vehicleNumber,
+        note: reason ? `Savdo bekor qilindi: ${reason}` : "Savdo bekor qilindi",
+      });
+    }
+
+    const [updated] = await tx
+      .update(sales)
+      .set({
+        cancelledAt: new Date(),
+        cancelReason: reason ?? null,
+        paymentStatus: "cancelled",
+        updatedAt: new Date(),
+      })
+      .where(eq(sales.id, id))
+      .returning();
+
+    return updated;
+  });
+}
+
 export async function listSales(filters: {
   partnerId?: string;
-  paymentStatus?: "paid" | "partial" | "credit";
+  paymentStatus?: "paid" | "partial" | "credit" | "cancelled";
   from?: Date;
   to?: Date;
 }) {
@@ -151,7 +227,7 @@ export async function listSales(filters: {
   return db.query.sales.findMany({
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: desc(sales.saleDate),
-    with: { partner: true, warehouse: true },
+    with: { partner: true, warehouse: true, items: { with: { product: true } } },
   });
 }
 

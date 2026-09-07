@@ -1,12 +1,27 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Warehouse as WarehouseIcon } from "lucide-react";
+import {
+  ArrowDownToLine,
+  Package,
+  Pencil,
+  Scale,
+  Trash2,
+  Warehouse as WarehouseIcon,
+  Plus,
+} from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -26,29 +41,64 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { WarehouseFormDialog } from "@/components/warehouse-form-dialog";
+import { StockAdjustmentDialog } from "@/components/stock-adjustment-dialog";
 import { api, ApiError } from "@/lib/api";
-import type { Warehouse } from "@/lib/types";
+import type { ProductStock, Warehouse } from "@/lib/types";
+import { formatMoney, formatQuantity } from "@/lib/format";
+
+/** Turli o'lchov birligidagi (kg/ton) qoldiqlarni bitta kg qiymatiga normallashtiradi. */
+function toKg(qty: number, unit: "kg" | "ton") {
+  return unit === "ton" ? qty * 1000 : qty;
+}
 
 export default function WarehousesPage() {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data: warehouses, isLoading } = useQuery({
     queryKey: ["warehouses"],
     queryFn: () => api.get<Warehouse[]>("/warehouses"),
+  });
+  const { data: stockLevels } = useQuery({
+    queryKey: ["stock-levels"],
+    queryFn: () => api.get<ProductStock[]>("/stock/levels"),
   });
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Warehouse | null>(null);
   const [deleting, setDeleting] = useState<Warehouse | null>(null);
+  const [viewing, setViewing] = useState<Warehouse | null>(null);
+  const [adjusting, setAdjusting] = useState<ProductStock | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/warehouses/${id}`),
     onSuccess: () => {
-      toast.success("Ombor o'chirildi");
+      toast.success("Ombor arxivga o'tkazildi");
       queryClient.invalidateQueries({ queryKey: ["warehouses"] });
+      queryClient.invalidateQueries({ queryKey: ["archived-warehouses"] });
+      // Shu ombordagi qoldiq endi "faol" hisoblanmaydi - qoldiq ko'rinishlari
+      // va bosh sahifa ham yangilanishi kerak.
+      queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
     onSettled: () => setDeleting(null),
   });
+
+  function stockFor(warehouseId: string) {
+    return (stockLevels ?? []).filter((s) => s.warehouseId === warehouseId && Number(s.quantity) > 0);
+  }
+
+  function summaryFor(warehouseId: string) {
+    const rows = stockFor(warehouseId);
+    const totalKg = rows.reduce(
+      (sum, r) => sum + toKg(Number(r.quantity), r.product?.unit ?? "kg"),
+      0
+    );
+    const totalValueUzs = rows.reduce(
+      (sum, r) => sum + Number(r.quantity) * Number(r.avgCostUzs),
+      0
+    );
+    return { productCount: rows.length, totalKg, totalValueUzs };
+  }
 
   return (
     <div className="space-y-4">
@@ -56,7 +106,7 @@ export default function WarehousesPage() {
         <div>
           <h1 className="text-2xl font-semibold">Omborlar</h1>
           <p className="text-sm text-muted-foreground">
-            Kirim-chiqim qaysi omborda bo'lganini belgilash uchun
+            Har bir omborda qancha mahsulot va qiymat borligi - kartaga bosib ko&apos;ring
           </p>
         </div>
         <Button
@@ -72,8 +122,12 @@ export default function WarehousesPage() {
       </div>
 
       {isLoading ? (
-        <Skeleton className="h-64" />
-      ) : !data || data.length === 0 ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Skeleton className="h-32" />
+          <Skeleton className="h-32" />
+          <Skeleton className="h-32" />
+        </div>
+      ) : !warehouses || warehouses.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <WarehouseIcon className="h-8 w-8 text-muted-foreground" />
@@ -85,78 +139,68 @@ export default function WarehousesPage() {
           </CardContent>
         </Card>
       ) : (
-        <>
-          <Card className="hidden overflow-x-auto md:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nomi</TableHead>
-                  <TableHead>Manzili</TableHead>
-                  <TableHead>Izoh</TableHead>
-                  <TableHead className="w-24"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((w) => (
-                  <TableRow key={w.id}>
-                    <TableCell className="font-medium">{w.name}</TableCell>
-                    <TableCell>{w.address ?? "-"}</TableCell>
-                    <TableCell className="max-w-64 truncate text-muted-foreground">
-                      {w.notes ?? "-"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            setEditing(w);
-                            setFormOpen(true);
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleting(w)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {warehouses.map((w) => {
+            const summary = summaryFor(w.id);
+            return (
+              <Card
+                key={w.id}
+                className="cursor-pointer transition-colors hover:border-primary/50"
+                onClick={() => setViewing(w)}
+              >
+                <CardContent className="space-y-3 py-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <WarehouseIcon className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="font-medium leading-tight">{w.name}</p>
+                        {w.address && (
+                          <p className="text-xs text-muted-foreground">{w.address}</p>
+                        )}
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
-
-          <div className="space-y-3 md:hidden">
-            {data.map((w) => (
-              <Card key={w.id}>
-                <CardContent className="space-y-1 py-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-medium">{w.name}</p>
-                      <p className="text-sm text-muted-foreground">{w.address ?? "-"}</p>
                     </div>
                     <div className="flex gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setEditing(w);
                           setFormOpen(true);
                         }}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => setDeleting(w)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleting(w);
+                        }}
+                      >
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-2 rounded-md bg-muted/40 p-2 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Jami og&apos;irlik</p>
+                      <p className="font-medium">{formatQuantity(summary.totalKg, "kg")}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Jami qiymat</p>
+                      <p className="font-medium">{formatMoney(summary.totalValueUzs)}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {summary.productCount} turdagi mahsulot
+                  </p>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        </>
+            );
+          })}
+        </div>
       )}
 
       <WarehouseFormDialog warehouse={editing} open={formOpen} onOpenChange={setFormOpen} />
@@ -166,7 +210,8 @@ export default function WarehousesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Omborni o'chirish</AlertDialogTitle>
             <AlertDialogDescription>
-              &quot;{deleting?.name}&quot; omborini o'chirmoqchimisiz?
+              &quot;{deleting?.name}&quot; omborini o'chirmoqchimisiz? Yozuv butunlay o'chmaydi -
+              &quot;Arxiv&quot; bo&apos;limiga o&apos;tadi va kerak bo&apos;lsa qaytarib tiklash mumkin.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -180,6 +225,90 @@ export default function WarehousesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <WarehouseIcon className="h-5 w-5" /> {viewing?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {viewing && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {summaryFor(viewing.id).productCount} turdagi mahsulot,{" "}
+                  {formatMoney(summaryFor(viewing.id).totalValueUzs)}
+                </p>
+                <Link
+                  href={`/ombor/kirim?warehouseId=${viewing.id}`}
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                >
+                  <ArrowDownToLine className="h-4 w-4" />
+                  Kirim qilish
+                </Link>
+              </div>
+
+              {stockFor(viewing.id).length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                  <Package className="h-8 w-8 text-muted-foreground" />
+                  <p className="text-muted-foreground">Bu omborda hozircha mahsulot yo&apos;q</p>
+                </div>
+              ) : (
+                <div className="max-h-[50vh] overflow-y-auto rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Mahsulot</TableHead>
+                        <TableHead>Qoldiq</TableHead>
+                        <TableHead>Tan narx</TableHead>
+                        <TableHead className="text-right">Jami qiymat</TableHead>
+                        <TableHead className="w-10"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {stockFor(viewing.id).map((s) => (
+                        <TableRow key={s.id}>
+                          <TableCell className="font-medium">{s.product?.name ?? "-"}</TableCell>
+                          <TableCell>
+                            {formatQuantity(s.quantity, s.product?.unit ?? "kg")}
+                          </TableCell>
+                          <TableCell>{formatMoney(s.avgCostUzs)}</TableCell>
+                          <TableCell className="text-right font-medium">
+                            {formatMoney(Number(s.quantity) * Number(s.avgCostUzs))}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Miqdorni to'g'irlash (inventarizatsiya)"
+                              onClick={() => setAdjusting(s)}
+                            >
+                              <Scale className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {adjusting && (
+        <StockAdjustmentDialog
+          productId={adjusting.productId}
+          warehouseId={adjusting.warehouseId}
+          productName={adjusting.product?.name ?? "-"}
+          unit={adjusting.product?.unit ?? "kg"}
+          currentQuantity={Number(adjusting.quantity)}
+          open={!!adjusting}
+          onOpenChange={(o) => !o && setAdjusting(null)}
+        />
+      )}
     </div>
   );
 }
