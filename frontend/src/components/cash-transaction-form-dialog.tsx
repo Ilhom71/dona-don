@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -28,10 +29,16 @@ import {
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { api, ApiError } from "@/lib/api";
 import type { Partner } from "@/lib/types";
+import { paymentMethodLabels } from "@/lib/format";
+
+const methodItems = Object.entries(paymentMethodLabels).map(([value, label]) => ({ value, label }));
 
 const schema = z.object({
   partnerId: z.string().optional(),
   amountUzs: z.string().min(1, "Summa kiritilishi shart"),
+  method: z.enum(["cash", "card", "bank"]),
+  // Faqat method="bank" bo'lganda ma'noli - aynan qaysi bank hisob raqamiga/dan.
+  bankAccount: z.string().optional(),
   note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
 });
 
@@ -46,10 +53,17 @@ export function CashTransactionFormDialog({
   direction,
   open,
   onOpenChange,
+  title,
+  initialPartnerId,
 }: {
   direction: "in" | "out";
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Ixtiyoriy sarlavha almashtirish (masalan "Hamkorga pul o'tkazish").
+  title?: string;
+  // Hamkor sahifasidan "Pul o'tkazish" bosilganda, o'sha hamkor oldindan
+  // tanlangan holda ochiladi (baribir o'zgartirish mumkin).
+  initialPartnerId?: string | null;
 }) {
   const queryClient = useQueryClient();
   const [partnerFormOpen, setPartnerFormOpen] = useState(false);
@@ -63,15 +77,37 @@ export function CashTransactionFormDialog({
     control,
     reset,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { partnerId: "", amountUzs: "", note: "" },
+    defaultValues: { partnerId: "", amountUzs: "", method: "cash", bankAccount: "", note: "" },
   });
 
   useEffect(() => {
-    if (open) reset({ partnerId: "", amountUzs: "", note: "" });
-  }, [open, reset]);
+    if (open) {
+      const initialPartner = partners?.find((p) => p.id === initialPartnerId);
+      reset({
+        partnerId: initialPartnerId ?? "",
+        amountUzs: "",
+        method: "cash",
+        bankAccount: initialPartner?.bankAccount ?? "",
+        note: "",
+      });
+    }
+  }, [open, initialPartnerId, partners, reset]);
+
+  const method = watch("method");
+
+  // Hamkor tanlanganda (yoki o'zgartirilganda), agar uning saqlangan bank
+  // hisob raqami bo'lsa - avtomatik taklif qilinadi (baribir qo'lda
+  // o'zgartirish/o'chirish mumkin). Boshqa hamkorga o'tilsa va uning
+  // raqami bo'lmasa, eski hamkorning raqami qolib ketmasligi uchun tozalanadi.
+  function handlePartnerSelect(partnerId: string) {
+    setValue("partnerId", partnerId);
+    const selected = partners?.find((p) => p.id === partnerId);
+    setValue("bankAccount", selected?.bankAccount ?? "");
+  }
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) =>
@@ -79,6 +115,8 @@ export function CashTransactionFormDialog({
         direction,
         partnerId: values.partnerId || null,
         amountUzs: Number(values.amountUzs),
+        method: values.method,
+        bankAccount: values.method === "bank" ? values.bankAccount || null : null,
         note: values.note,
       }),
     onSuccess: () => {
@@ -98,7 +136,7 @@ export function CashTransactionFormDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {direction === "in" ? "Kassaga qo'lda kirim" : "Kassadan qo'lda chiqim"}
+            {title ?? (direction === "in" ? "Kassaga qo'lda kirim" : "Kassadan qo'lda chiqim")}
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
@@ -111,7 +149,7 @@ export function CashTransactionFormDialog({
                 render={({ field }) => (
                   <Select
                     value={field.value}
-                    onValueChange={field.onChange}
+                    onValueChange={(v) => v && handlePartnerSelect(v)}
                     items={partners?.map((p) => ({ value: p.id, label: p.name })) ?? []}
                   >
                     <SelectTrigger className="w-full">
@@ -140,11 +178,52 @@ export function CashTransactionFormDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="amountUzs">Summa (so&apos;m)</Label>
-            <Input id="amountUzs" type="number" step="any" autoFocus {...register("amountUzs")} />
+            <Controller
+              control={control}
+              name="amountUzs"
+              render={({ field }) => (
+                <MoneyInput id="amountUzs" autoFocus value={field.value} onChange={field.onChange} />
+              )}
+            />
             {errors.amountUzs && (
               <p className="text-sm text-destructive">{errors.amountUzs.message}</p>
             )}
           </div>
+          <div className="space-y-2">
+            <Label>To&apos;lov usuli</Label>
+            <Controller
+              control={control}
+              name="method"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange} items={methodItems}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {methodItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+          {method === "bank" && (
+            <div className="space-y-2">
+              <Label htmlFor="bankAccount">Bank hisob raqami</Label>
+              <Input
+                id="bankAccount"
+                placeholder="2020 8000 xxxx xxxx"
+                {...register("bankAccount")}
+              />
+              <p className="text-xs text-muted-foreground">
+                Hamkor tanlansa va uning saqlangan raqami bo&apos;lsa - avtomatik to&apos;ldiriladi,
+                kerak bo&apos;lsa qo&apos;lda o&apos;zgartiring.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="note">Sharh (izoh)</Label>
             <Textarea

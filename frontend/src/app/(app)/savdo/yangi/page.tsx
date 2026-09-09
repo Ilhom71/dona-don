@@ -7,9 +7,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Truck } from "lucide-react";
+import { AlertTriangle, Plus, Trash2, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,8 +23,8 @@ import {
 } from "@/components/ui/select";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { api, ApiError } from "@/lib/api";
-import type { Partner, Product, Sale, Warehouse, ProductStock } from "@/lib/types";
-import { formatMoney, formatQuantity, toDateInputValue } from "@/lib/format";
+import type { Partner, Product, Sale, Warehouse, ProductStock, StockLot, DayStatus } from "@/lib/types";
+import { formatDate, formatMoney, formatQuantity, toDateInputValue } from "@/lib/format";
 
 const itemSchema = z.object({
   productId: z.string().uuid("Mahsulot tanlang"),
@@ -31,6 +32,9 @@ const itemSchema = z.object({
   unitPrice: z.string().min(1, "Narx kiritilishi shart"),
   // yuk puli (tashish xarajati) - ixtiyoriy, doim so'mda kiritiladi
   freightCostUzs: z.string().optional(),
+  // Qaysi partiyadan (narxdan) sotilsin - bo'sh bo'lsa avtomatik (FIFO,
+  // kerak bo'lsa bir nechta partiyani birlashtirib)
+  lotId: z.string().optional(),
 });
 
 const schema = z.object({
@@ -61,6 +65,8 @@ function NewSaleForm() {
   const searchParams = useSearchParams();
   const initialProductId = searchParams.get("productId") ?? "";
   const initialPartnerId = searchParams.get("partnerId") ?? "";
+  const editId = searchParams.get("editId");
+  const isEdit = !!editId;
   const [partnerFormOpen, setPartnerFormOpen] = useState(false);
 
   const { data: partners } = useQuery({
@@ -79,6 +85,25 @@ function NewSaleForm() {
     queryKey: ["stock-levels"],
     queryFn: () => api.get<ProductStock[]>("/stock/levels"),
   });
+  // Har xil narxda kirim qilingan (masalan har xil hamkordan olingan)
+  // partiyalar - "qaysi partiyadan sotilsin" tanlovi shu yerdan olinadi.
+  const { data: lots } = useQuery({
+    queryKey: ["stock-lots"],
+    queryFn: () => api.get<StockLot[]>("/stock/lots"),
+  });
+  const { data: editingSale } = useQuery({
+    queryKey: ["sale", editId],
+    queryFn: () => api.get<Sale>(`/sales/${editId}`),
+    enabled: isEdit,
+  });
+  // Yangi savdo yaratish kun ochilishini talab qiladi (tahrirlashga
+  // taalluqli emas) - Kassa bosh sahifasidagi "Kun holati" bilan bir xil.
+  const { data: dayStatus } = useQuery({
+    queryKey: ["day-status"],
+    queryFn: () => api.get<DayStatus>("/day-closings/status"),
+    enabled: !isEdit,
+  });
+  const dayBlocked = !isEdit && dayStatus && !dayStatus.canSell;
 
   const {
     register,
@@ -86,6 +111,7 @@ function NewSaleForm() {
     control,
     watch,
     setValue,
+    reset,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -95,7 +121,9 @@ function NewSaleForm() {
       vehicleNumber: "",
       saleDate: toDateInputValue(new Date()),
       currency: "UZS",
-      items: [{ productId: initialProductId, quantity: "", unitPrice: "", freightCostUzs: "" }],
+      items: [
+        { productId: initialProductId, quantity: "", unitPrice: "", freightCostUzs: "", lotId: "" },
+      ],
       initialPayment: "",
       paymentMethod: "cash",
       notes: "",
@@ -109,16 +137,45 @@ function NewSaleForm() {
 
   // Faqat bitta ombor bo'lsa, avtomatik tanlab qo'yamiz.
   useEffect(() => {
-    if (!warehouseId && warehouses?.length === 1) {
+    if (!isEdit && !warehouseId && warehouses?.length === 1) {
       setValue("warehouseId", warehouses[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [warehouses]);
+  }, [warehouses, isEdit]);
+
+  // Tahrirlash rejimida - mavjud savdo ma'lumotlari yuklangach forma to'ldiriladi.
+  useEffect(() => {
+    if (editingSale) {
+      reset({
+        partnerId: editingSale.partnerId,
+        warehouseId: editingSale.warehouseId ?? "",
+        vehicleNumber: editingSale.vehicleNumber ?? "",
+        saleDate: toDateInputValue(editingSale.saleDate),
+        currency: editingSale.currency,
+        items: (editingSale.items ?? []).map((i) => ({
+          productId: i.productId,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          freightCostUzs: Number(i.freightCostUzs) > 0 ? i.freightCostUzs : "",
+          lotId: "",
+        })),
+        initialPayment: "",
+        paymentMethod: "cash",
+        notes: editingSale.notes ?? "",
+      });
+    }
+  }, [editingSale, reset]);
 
   const availableQty = (productId: string) => {
     if (!warehouseId) return null;
     const level = stockLevels?.find((s) => s.productId === productId && s.warehouseId === warehouseId);
     return Number(level?.quantity ?? 0);
+  };
+
+  // Tanlangan mahsulot/ombor uchun faol partiyalar (eng eskisi birinchi).
+  const lotsFor = (productId: string) => {
+    if (!warehouseId || !productId) return [];
+    return (lots ?? []).filter((l) => l.productId === productId && l.warehouseId === warehouseId);
   };
 
   // Havoladan (masalan mahsulot/hamkor sahifasidagi "Sotish" tugmasi) kelgan
@@ -135,6 +192,7 @@ function NewSaleForm() {
 
   function handleProductSelect(index: number, productId: string) {
     setValue(`items.${index}.productId`, productId);
+    setValue(`items.${index}.lotId`, "");
     const product = products?.find((p) => p.id === productId);
     if (product?.sellingPriceUzs && currency === "UZS") {
       setValue(`items.${index}.unitPrice`, product.sellingPriceUzs);
@@ -155,8 +213,8 @@ function NewSaleForm() {
   }, [items]);
 
   const mutation = useMutation({
-    mutationFn: (values: FormValues) =>
-      api.post<Sale>("/sales", {
+    mutationFn: (values: FormValues) => {
+      const payload = {
         partnerId: values.partnerId,
         warehouseId: values.warehouseId,
         vehicleNumber: values.vehicleNumber || null,
@@ -167,19 +225,28 @@ function NewSaleForm() {
           quantity: Number(i.quantity),
           unitPrice: Number(i.unitPrice),
           freightCostUzs: i.freightCostUzs ? Number(i.freightCostUzs) : null,
+          lotId: i.lotId || null,
         })),
-        initialPayment: values.initialPayment ? Number(values.initialPayment) : null,
-        paymentMethod: values.paymentMethod,
         notes: values.notes || null,
-      }),
+      };
+      return isEdit
+        ? api.put<Sale>(`/sales/${editId}`, payload)
+        : api.post<Sale>("/sales", {
+            ...payload,
+            initialPayment: values.initialPayment ? Number(values.initialPayment) : null,
+            paymentMethod: values.paymentMethod,
+          });
+    },
     onSuccess: (sale) => {
-      toast.success("Savdo muvaffaqiyatli yaratildi");
+      toast.success(isEdit ? "Savdo tahrirlandi" : "Savdo muvaffaqiyatli yaratildi");
       queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["sale", sale.id] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["partners"] });
       queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       router.push(`/savdo/tarix/${sale.id}`);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -188,9 +255,22 @@ function NewSaleForm() {
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">Yangi savdo</h1>
-        <p className="text-sm text-muted-foreground">Mijozga don sotish</p>
+        <h1 className="text-2xl font-semibold">{isEdit ? "Savdoni tahrirlash" : "Yangi savdo"}</h1>
+        <p className="text-sm text-muted-foreground">
+          {isEdit ? "Miqdor, narx va boshqa ma'lumotlarni o'zgartirish" : "Mijozga don sotish"}
+        </p>
       </div>
+
+      {dayBlocked && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            {dayStatus?.closed
+              ? "Bugungi kun yopilgan - savdo qilish uchun avval Kassa sahifasidan kunni qayta oching."
+              : "Bugungi kun hali ochilmagan - savdo qilish uchun avval Kassa sahifasidan kunni oching."}
+          </p>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
         <Card>
@@ -315,7 +395,7 @@ function NewSaleForm() {
               size="sm"
               variant="outline"
               onClick={() =>
-                append({ productId: "", quantity: "", unitPrice: "", freightCostUzs: "" })
+                append({ productId: "", quantity: "", unitPrice: "", freightCostUzs: "", lotId: "" })
               }
             >
               <Plus className="h-4 w-4" />
@@ -387,6 +467,49 @@ function NewSaleForm() {
                       </Button>
                     </div>
                   </div>
+
+                  {lotsFor(items[index]?.productId).length > 1 && (
+                    <div className="mt-3 space-y-2">
+                      <Label>
+                        Partiya <span className="font-normal text-muted-foreground">(narxi bo'yicha)</span>
+                      </Label>
+                      <Controller
+                        control={control}
+                        name={`items.${index}.lotId`}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value || "auto"}
+                            onValueChange={(v) => field.onChange(v === "auto" ? "" : v)}
+                            items={[
+                              { value: "auto", label: "Avtomatik (eng eski partiyadan, kerak bo'lsa birlashtirib)" },
+                              ...lotsFor(items[index]?.productId).map((lot) => ({
+                                value: lot.id,
+                                label: `${formatMoney(lot.unitCostUzs)}/birlik - ${formatQuantity(lot.remainingQuantity, lot.unit)} mavjud (${formatDate(lot.receivedAt)}${lot.supplierName ? `, ${lot.supplierName}` : ""})`,
+                              })),
+                            ]}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="auto">
+                                Avtomatik (eng eski partiyadan, kerak bo&apos;lsa birlashtirib)
+                              </SelectItem>
+                              {lotsFor(items[index]?.productId).map((lot) => (
+                                <SelectItem key={lot.id} value={lot.id}>
+                                  {formatMoney(lot.unitCostUzs)}/birlik -{" "}
+                                  {formatQuantity(lot.remainingQuantity, lot.unit)} mavjud (
+                                  {formatDate(lot.receivedAt)}
+                                  {lot.supplierName ? `, ${lot.supplierName}` : ""})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                  )}
+
                   <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <div className="space-y-2">
                       <Label>
@@ -396,15 +519,22 @@ function NewSaleForm() {
                     </div>
                     <div className="space-y-2">
                       <Label>Narxi (1 birlik uchun)</Label>
-                      <Input type="number" step="any" {...register(`items.${index}.unitPrice`)} />
+                      <Controller
+                        control={control}
+                        name={`items.${index}.unitPrice`}
+                        render={({ field }) => (
+                          <MoneyInput value={field.value} onChange={field.onChange} allowDecimal />
+                        )}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Yuk puli (so&apos;m)</Label>
-                      <Input
-                        type="number"
-                        step="any"
-                        placeholder="0"
-                        {...register(`items.${index}.freightCostUzs`)}
+                      <Controller
+                        control={control}
+                        name={`items.${index}.freightCostUzs`}
+                        render={({ field }) => (
+                          <MoneyInput placeholder="0" value={field.value} onChange={field.onChange} />
+                        )}
                       />
                     </div>
                   </div>
@@ -434,57 +564,85 @@ function NewSaleForm() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">To'lov (ixtiyoriy)</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="initialPayment">Boshlang'ich to'lov</Label>
-              <Input
-                id="initialPayment"
-                type="number"
-                step="any"
-                placeholder="0 - agar to'liq nasiya bo'lsa"
-                {...register("initialPayment")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>To'lov usuli</Label>
-              <Controller
-                control={control}
-                name="paymentMethod"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={[
-                      { value: "cash", label: "Naqd" },
-                      { value: "card", label: "Karta" },
-                      { value: "bank", label: "Bank o'tkazmasi" },
-                    ]}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cash">Naqd</SelectItem>
-                      <SelectItem value="card">Karta</SelectItem>
-                      <SelectItem value="bank">Bank o'tkazmasi</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="notes">Izoh</Label>
-              <Textarea id="notes" {...register("notes")} />
-            </div>
-          </CardContent>
-        </Card>
+        {isEdit ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">To'lov</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Tahrirlashda to&apos;lov o&apos;zgartirilmaydi - hozircha to&apos;langan:{" "}
+                <span className="font-medium text-foreground">
+                  {formatMoney(editingSale?.paidAmountUzs ?? 0)}
+                </span>
+                . Qo&apos;shimcha to&apos;lash uchun savdo tafsilotidagi &quot;To&apos;lov
+                qo&apos;shish&quot;dan foydalaning.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="notes">Izoh</Label>
+                <Textarea id="notes" {...register("notes")} />
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">To'lov (ixtiyoriy)</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="initialPayment">Boshlang'ich to'lov</Label>
+                <Controller
+                  control={control}
+                  name="initialPayment"
+                  render={({ field }) => (
+                    <MoneyInput
+                      id="initialPayment"
+                      placeholder="0 - agar to'liq nasiya bo'lsa"
+                      allowDecimal
+                      value={field.value}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>To'lov usuli</Label>
+                <Controller
+                  control={control}
+                  name="paymentMethod"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={[
+                        { value: "cash", label: "Naqd" },
+                        { value: "card", label: "Karta" },
+                        { value: "bank", label: "Bank o'tkazmasi" },
+                      ]}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">Naqd</SelectItem>
+                        <SelectItem value="card">Karta</SelectItem>
+                        <SelectItem value="bank">Bank o'tkazmasi</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="notes">Izoh</Label>
+                <Textarea id="notes" {...register("notes")} />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-        <Button type="submit" size="lg" className="w-full" disabled={mutation.isPending}>
-          {mutation.isPending ? "Saqlanmoqda..." : "Savdoni saqlash"}
+        <Button type="submit" size="lg" className="w-full" disabled={mutation.isPending || dayBlocked}>
+          {mutation.isPending ? "Saqlanmoqda..." : isEdit ? "O'zgarishlarni saqlash" : "Savdoni saqlash"}
         </Button>
       </form>
 

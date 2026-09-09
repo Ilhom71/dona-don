@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Package, ShoppingCart } from "lucide-react";
+import { Plus, Pencil, Trash2, Package, ShoppingCart, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -28,10 +34,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ProductFormDialog } from "@/components/product-form-dialog";
+import { ProductBulkCreateDialog } from "@/components/product-bulk-create-dialog";
 import { ExcelActions } from "@/components/excel-actions";
 import { api, ApiError } from "@/lib/api";
-import type { Product, ProductStock } from "@/lib/types";
-import { formatMoney, formatQuantity, unitLabels } from "@/lib/format";
+import type { Product, ProductStock, StockLot } from "@/lib/types";
+import { formatDate, formatMoney, formatQuantity, movementSourceLabels, unitLabels } from "@/lib/format";
 
 export default function ProductsPage() {
   const queryClient = useQueryClient();
@@ -43,13 +50,24 @@ export default function ProductsPage() {
     queryKey: ["stock-levels"],
     queryFn: () => api.get<ProductStock[]>("/stock/levels"),
   });
+  // Har xil narxda kirim qilingan (masalan har xil hamkordan olingan) don
+  // - har biri o'z narxi bilan alohida "partiya" - "Partiyalar" oynasida
+  // ko'rsatiladi, o'rtacha tan narxga aralashtirilmasdan.
+  const { data: lots } = useQuery({
+    queryKey: ["stock-lots"],
+    queryFn: () => api.get<StockLot[]>("/stock/lots"),
+  });
 
   const warehouseBreakdown = (productId: string) =>
     (stockLevels ?? []).filter((s) => s.productId === productId && Number(s.quantity) > 0);
 
+  const lotsForProduct = (productId: string) => (lots ?? []).filter((l) => l.productId === productId);
+
   const [formOpen, setFormOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
+  const [viewingLots, setViewingLots] = useState<Product | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/products/${id}`),
@@ -59,6 +77,7 @@ export default function ProductsPage() {
       queryClient.invalidateQueries({ queryKey: ["archived-products"] });
       // Omborlardagi qoldiq ko'rinishlari va bosh sahifa ham yangilanishi kerak.
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -80,13 +99,7 @@ export default function ProductsPage() {
             templatePath="/excel/products/template"
             invalidateKey="products"
           />
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-          >
+          <Button size="sm" onClick={() => setBulkOpen(true)}>
             <Plus className="h-4 w-4" />
             Yangi mahsulot
           </Button>
@@ -100,7 +113,7 @@ export default function ProductsPage() {
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <Package className="h-8 w-8 text-muted-foreground" />
             <p className="text-muted-foreground">Hozircha mahsulot qo'shilmagan</p>
-            <Button size="sm" onClick={() => setFormOpen(true)}>
+            <Button size="sm" onClick={() => setBulkOpen(true)}>
               <Plus className="h-4 w-4" />
               Birinchi mahsulotni qo'shish
             </Button>
@@ -168,6 +181,14 @@ export default function ProductsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          title="Partiyalar (har xil tan narxlar)"
+                          onClick={() => setViewingLots(p)}
+                        >
+                          <Layers className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => {
                             setEditing(p);
                             setFormOpen(true);
@@ -204,6 +225,14 @@ export default function ProductsPage() {
                       >
                         <ShoppingCart className="h-4 w-4" />
                       </Link>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Partiyalar (har xil tan narxlar)"
+                        onClick={() => setViewingLots(p)}
+                      >
+                        <Layers className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -252,6 +281,51 @@ export default function ProductsPage() {
       )}
 
       <ProductFormDialog product={editing} open={formOpen} onOpenChange={setFormOpen} />
+      <ProductBulkCreateDialog open={bulkOpen} onOpenChange={setBulkOpen} />
+
+      {/* Har xil narxda kirim qilingan partiyalar (masalan har xil hamkordan
+          olingan bug'doy) - o'rtacha tan narxga aralashtirilmasdan, har biri
+          o'z narxi/omborida alohida ko'rinadi. */}
+      <Dialog open={!!viewingLots} onOpenChange={(o) => !o && setViewingLots(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5" /> {viewingLots?.name} - partiyalar
+            </DialogTitle>
+          </DialogHeader>
+          {viewingLots && (
+            <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+              {lotsForProduct(viewingLots.id).length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  Faol partiya yo&apos;q
+                </p>
+              ) : (
+                lotsForProduct(viewingLots.id).map((lot) => (
+                  <div
+                    key={lot.id}
+                    className="flex items-center justify-between gap-2 rounded-md border p-2.5 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p>
+                        {formatQuantity(lot.remainingQuantity, viewingLots.unit)} -{" "}
+                        <span className="font-medium">{formatMoney(lot.unitCostUzs)}</span>
+                        /birlik
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {lot.warehouseName} -{" "}
+                        {lot.supplierName ?? movementSourceLabels[lot.source] ?? lot.source}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {formatDate(lot.receivedAt)}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>

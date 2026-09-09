@@ -145,6 +145,7 @@ export default function SalesHistoryPage() {
       queryClient.invalidateQueries({ queryKey: ["partners"] });
       queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),

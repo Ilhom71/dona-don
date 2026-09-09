@@ -8,6 +8,7 @@ import {
   ArrowLeftRight,
   ArrowUpCircle,
   Ban,
+  Building2,
   DollarSign,
   Landmark,
   MinusCircle,
@@ -20,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -65,6 +67,7 @@ export default function AccountingPage() {
   const [to, setTo] = useState("");
   const [transferOpen, setTransferOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [bankTransferOpen, setBankTransferOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<CashLedgerRow | null>(null);
   const [newRate, setNewRate] = useState("");
 
@@ -159,6 +162,10 @@ export default function AccountingPage() {
         <Button size="sm" variant="outline" onClick={() => setWithdrawOpen(true)}>
           <MinusCircle className="h-4 w-4" />
           Pul chiqarish
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setBankTransferOpen(true)}>
+          <Building2 className="h-4 w-4" />
+          Bank orqali pul o&apos;tkazish
         </Button>
       </div>
 
@@ -276,7 +283,12 @@ export default function AccountingPage() {
                         {cashDirectionLabels[r.direction]}
                       </Badge>
                     </TableCell>
-                    <TableCell className="max-w-96 truncate">{r.description}</TableCell>
+                    <TableCell className="max-w-96 truncate">
+                      {r.description}
+                      {r.bankAccount && (
+                        <span className="ml-2 text-xs text-muted-foreground">({r.bankAccount})</span>
+                      )}
+                    </TableCell>
                     <TableCell
                       className={`text-right font-medium ${
                         r.direction === "in" ? "text-emerald-600" : "text-destructive"
@@ -312,7 +324,12 @@ export default function AccountingPage() {
                     </Badge>
                     <span className="text-xs text-muted-foreground">{formatDateTime(r.date)}</span>
                   </div>
-                  <p>{r.description}</p>
+                  <p>
+                    {r.description}
+                    {r.bankAccount && (
+                      <span className="ml-1 text-xs text-muted-foreground">({r.bankAccount})</span>
+                    )}
+                  </p>
                   <div className="flex items-center justify-between border-t pt-1">
                     <p className="font-medium">
                       <span className="text-muted-foreground font-normal">Qoldiq: </span>
@@ -434,13 +451,12 @@ export default function AccountingPage() {
           >
             <div className="space-y-2">
               <Label htmlFor="rate">Yangi kurs (1 USD = ? so&apos;m)</Label>
-              <Input
+              <MoneyInput
                 id="rate"
-                type="number"
-                step="any"
+                allowDecimal
                 value={newRate}
-                onChange={(e) => setNewRate(e.target.value)}
-                placeholder="12700"
+                onChange={setNewRate}
+                placeholder="12 700"
               />
             </div>
             <Button type="submit" disabled={rateMutation.isPending || !newRate}>
@@ -470,6 +486,12 @@ export default function AccountingPage() {
         mode="withdraw"
         open={withdrawOpen}
         onOpenChange={setWithdrawOpen}
+      />
+      <AccountingTransactionFormDialog
+        mode="withdraw"
+        defaultMethod="bank"
+        open={bankTransferOpen}
+        onOpenChange={setBankTransferOpen}
       />
 
       <AlertDialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>

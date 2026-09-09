@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -51,6 +52,7 @@ export function ProductFormDialog({
   const {
     register,
     handleSubmit,
+    control,
     reset,
     watch,
     setValue,
@@ -100,6 +102,7 @@ export function ProductFormDialog({
       toast.success(product ? "Mahsulot yangilandi" : "Mahsulot qo'shildi");
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       onOpenChange(false);
     },
@@ -142,12 +145,17 @@ export function ProductFormDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="sellingPriceUzs">Sotuv narxi (so'm)</Label>
-              <Input
-                id="sellingPriceUzs"
-                type="number"
-                step="any"
-                placeholder="1 birlik uchun"
-                {...register("sellingPriceUzs")}
+              <Controller
+                control={control}
+                name="sellingPriceUzs"
+                render={({ field }) => (
+                  <MoneyInput
+                    id="sellingPriceUzs"
+                    placeholder="1 birlik uchun"
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
               />
             </div>
             <div className="space-y-2">
@@ -158,7 +166,13 @@ export function ProductFormDialog({
           {product && (
             <div className="space-y-2">
               <Label htmlFor="avgCostUzs">Tan narx (so&apos;m, barcha omborlar uchun)</Label>
-              <Input id="avgCostUzs" type="number" step="any" {...register("avgCostUzs")} />
+              <Controller
+                control={control}
+                name="avgCostUzs"
+                render={({ field }) => (
+                  <MoneyInput id="avgCostUzs" value={field.value} onChange={field.onChange} />
+                )}
+              />
               <p className="text-xs text-muted-foreground">
                 Odatda kirim orqali avtomatik hisoblanadi - faqat xato bo&apos;lganda qo&apos;lda
                 tuzatish uchun.

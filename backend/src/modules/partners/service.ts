@@ -98,6 +98,7 @@ export async function listPartnersWithBalance(filters: { partnerId?: string } = 
       name: partners.name,
       phone: partners.phone,
       address: partners.address,
+      bankAccount: partners.bankAccount,
       type: partners.type,
       notes: partners.notes,
       createdAt: partners.createdAt,
@@ -144,6 +145,7 @@ export async function createPartner(data: {
   name: string;
   phone?: string | null;
   address?: string | null;
+  bankAccount?: string | null;
   type: "customer" | "supplier" | "both";
   notes?: string | null;
 }) {
@@ -157,6 +159,7 @@ export async function updatePartner(
     name: string;
     phone: string | null;
     address: string | null;
+    bankAccount: string | null;
     type: "customer" | "supplier" | "both";
     notes: string | null;
   }>
@@ -391,7 +394,7 @@ export async function getPartnerLedger(partnerId: string) {
       goodsValueUzs: null,
       freightCostUzs: null,
       paidUzs: Number(m.amountUzs),
-      paymentMethod: "cash",
+      paymentMethod: m.method,
     });
   }
 

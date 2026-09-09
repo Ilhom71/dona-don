@@ -34,9 +34,9 @@ export default function LoginPage() {
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-14 w-14 items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/wheat-sack.png" alt="Donadon" width={56} height={56} />
+            <img src="/wheat-sack.png" alt="Dona Don" width={56} height={56} />
           </div>
-          <CardTitle className="text-xl">Donadon</CardTitle>
+          <CardTitle className="text-xl">Dona Don</CardTitle>
           <CardDescription>Tizimga kirish uchun login va parolni kiriting</CardDescription>
         </CardHeader>
         <CardContent>

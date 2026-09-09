@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Donadon",
+  title: "Dona Don",
   description: "Don savdosi va ombor boshqaruv tizimi",
 };
 

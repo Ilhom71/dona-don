@@ -3,6 +3,10 @@ import { db } from "../../db";
 import { payments, expenses, cashTransactions } from "../../db/schema";
 
 type CashAccount = "kassa" | "buxgalteriya";
+// `transferToAccounting` boshqa (kattaroq) tranzaksiya ichida ham
+// chaqirilishi mumkin (masalan kun yopishda) - shuning uchun `tx`ni
+// tashqaridan qabul qiladi (stock/service.ts'dagi bilan bir xil naqsh).
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export type CashLedgerRow = {
   id: string;
@@ -15,6 +19,9 @@ export type CashLedgerRow = {
   category: string;
   partnerName: string | null;
   method: string;
+  // method="bank" bo'lganda - aynan qaysi bank hisob raqamiga/dan
+  // o'tkazilgani (faqat "manual" - qo'lda kiritilgan - yozuvlarda bo'ladi).
+  bankAccount: string | null;
   description: string;
   amountUzs: number;
   // Bekor qilingan yozuv ro'yxatda ko'rinadi (shaffoflik uchun), lekin
@@ -59,6 +66,7 @@ async function getLedgerForAccount(
         category: "sale_payment",
         partnerName: p.partner?.name ?? null,
         method: p.method,
+        bankAccount: null,
         description: p.notes || "Mijozdan to'lov",
         amountUzs: Number(p.amountUzs),
         cancelled: !!p.cancelledAt,
@@ -74,6 +82,7 @@ async function getLedgerForAccount(
         category: e.category,
         partnerName: e.partner?.name ?? null,
         method: e.method,
+        bankAccount: null,
         description: e.description,
         amountUzs: Number(e.amountUzs),
         cancelled: !!e.cancelledAt,
@@ -89,7 +98,8 @@ async function getLedgerForAccount(
       source: "manual",
       category: "manual",
       partnerName: m.partner?.name ?? null,
-      method: "cash",
+      method: m.method,
+      bankAccount: m.bankAccount,
       description: m.note,
       amountUzs: Number(m.amountUzs),
       cancelled: !!m.cancelledAt,
@@ -164,6 +174,8 @@ export async function createCashTransaction(input: {
   amountUzs: number;
   note: string;
   partnerId?: string | null;
+  method?: "cash" | "card" | "bank";
+  bankAccount?: string | null;
 }) {
   const [row] = await db
     .insert(cashTransactions)
@@ -173,6 +185,8 @@ export async function createCashTransaction(input: {
       amountUzs: String(input.amountUzs),
       note: input.note,
       partnerId: input.partnerId ?? null,
+      method: input.method ?? "cash",
+      bankAccount: input.bankAccount ?? null,
     })
     .returning();
   return row;
@@ -183,35 +197,36 @@ export async function createCashTransaction(input: {
  * bog'liq yozuv yaratiladi: kassadan chiqim + buxgalteriyaga kirim. Shu bilan
  * kassaning haqiqiy naqd qoldig'i kamayadi va joriy hisob qoldig'i oshadi -
  * ikkalasi ham har doim bir-biriga mos (dinamik, alohida hisoblanmaydi).
+ * `tx` chaqiruvchi tomonidan beriladi (kerak bo'lsa `db.transaction(...)`
+ * bilan ochib) - shu bilan bu funksiya kattaroq tranzaksiyaning bir qismi
+ * sifatida ham (masalan kun yopish - qulflash bilan) ishlatilishi mumkin.
  */
-export async function transferToAccounting(input: { amountUzs: number; note: string }) {
+export async function transferToAccounting(tx: Tx, input: { amountUzs: number; note: string }) {
   // Ikkala yozuv bitta `transferGroupId` bilan bog'lanadi - shunda bittasi
   // bekor qilinganda ikkinchisi ham avtomatik bekor qilinadi (aks holda
   // faqat bitta tomon bekor bo'lib, kassa/buxgalteriya qoldig'i mos kelmay qoladi).
   const transferGroupId = crypto.randomUUID();
-  return db.transaction(async (tx) => {
-    const [out] = await tx
-      .insert(cashTransactions)
-      .values({
-        direction: "out",
-        account: "kassa",
-        amountUzs: String(input.amountUzs),
-        note: `Buxgalteriyaga o'tkazma: ${input.note}`,
-        transferGroupId,
-      })
-      .returning();
-    const [inRow] = await tx
-      .insert(cashTransactions)
-      .values({
-        direction: "in",
-        account: "buxgalteriya",
-        amountUzs: String(input.amountUzs),
-        note: `Kassadan o'tkazma: ${input.note}`,
-        transferGroupId,
-      })
-      .returning();
-    return { out, in: inRow };
-  });
+  const [out] = await tx
+    .insert(cashTransactions)
+    .values({
+      direction: "out",
+      account: "kassa",
+      amountUzs: String(input.amountUzs),
+      note: `Buxgalteriyaga o'tkazma: ${input.note}`,
+      transferGroupId,
+    })
+    .returning();
+  const [inRow] = await tx
+    .insert(cashTransactions)
+    .values({
+      direction: "in",
+      account: "buxgalteriya",
+      amountUzs: String(input.amountUzs),
+      note: `Kassadan o'tkazma: ${input.note}`,
+      transferGroupId,
+    })
+    .returning();
+  return { out, in: inRow };
 }
 
 /**
@@ -219,13 +234,20 @@ export async function transferToAccounting(input: { amountUzs: number; note: str
  * hisobdan mablag' oldi yoki bank orqali chiqim qildi. Faqat buxgalteriya
  * hisobiga tegishli, kassaga taalluqli emas.
  */
-export async function withdrawFromAccounting(input: { amountUzs: number; note: string }) {
+export async function withdrawFromAccounting(input: {
+  amountUzs: number;
+  note: string;
+  method?: "cash" | "card" | "bank";
+  bankAccount?: string | null;
+}) {
   const [row] = await db
     .insert(cashTransactions)
     .values({
       direction: "out",
       account: "buxgalteriya",
       amountUzs: String(input.amountUzs),
+      method: input.method ?? "cash",
+      bankAccount: input.method === "bank" ? input.bankAccount ?? null : null,
       note: input.note,
     })
     .returning();

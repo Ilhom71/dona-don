@@ -1,0 +1,1 @@
+ALTER TABLE "cash_transactions" ADD COLUMN "bank_account" varchar(64);

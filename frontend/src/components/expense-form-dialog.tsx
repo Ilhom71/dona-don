@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -193,7 +193,13 @@ export function ExpenseFormDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="amount">Summa</Label>
-              <Input id="amount" type="number" step="any" autoFocus {...register("amount")} />
+              <Controller
+                control={control}
+                name="amount"
+                render={({ field }) => (
+                  <MoneyInput id="amount" autoFocus value={field.value} onChange={field.onChange} />
+                )}
+              />
               {errors.amount && (
                 <p className="text-sm text-destructive">{errors.amount.message}</p>
               )}

@@ -4,12 +4,13 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowDownCircle,
-  ArrowUpCircle,
   Ban,
+  CircleDollarSign,
+  Landmark,
   MinusCircle,
   PlusCircle,
   Receipt,
+  TrendingDown,
   Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,7 +42,7 @@ import { KassaSubNav } from "@/components/kassa-subnav";
 import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
 import { ExpenseFormDialog } from "@/components/expense-form-dialog";
 import { api, ApiError } from "@/lib/api";
-import type { CashLedgerRow, CashSummary } from "@/lib/types";
+import type { CashLedgerRow, CashSummary, Partner } from "@/lib/types";
 import { cashDirectionLabels, formatDateTime, formatMoney, paymentMethodLabels } from "@/lib/format";
 
 // Kelib chiqqan jadvaliga qarab to'g'ri "bekor qilish" endpointini tanlaydi.
@@ -96,6 +97,27 @@ export default function CashOperationsPage() {
     queryFn: () => api.get<CashSummary>(`/cash/summary${qs ? `?${qs}` : ""}`),
   });
 
+  // "Qozondagi pul" (kassa+buxgalteriya), "Qarzlarim" va "Asosiy o'zim
+  // pulim" kartalari uchun - davrga bog'liq emas, har doim hozirgi holat.
+  const { data: accountingSummary, isLoading: accountingLoading } = useQuery({
+    queryKey: ["accounting-summary", "all"],
+    queryFn: () => api.get<CashSummary>("/cash/accounting/summary"),
+  });
+  const { data: partners, isLoading: partnersLoading } = useQuery({
+    queryKey: ["partners"],
+    queryFn: () => api.get<Partner[]>("/partners"),
+  });
+  const potMoneyUzs = (summary?.currentBalanceUzs ?? 0) + (accountingSummary?.currentBalanceUzs ?? 0);
+  // Faqat manfiy balanslar (biz hamkorga qarzdor bo'lganlar) - musbatlari
+  // "mijoz bizga qarzdor", bu "mening qarzim" emas.
+  const myDebtsUzs = (partners ?? []).reduce(
+    (sum, p) => sum + Math.max(0, -p.balanceUzs),
+    0
+  );
+  const netOwnMoneyUzs = potMoneyUzs - myDebtsUzs;
+  const potLoading = summaryLoading || accountingLoading;
+  const debtsLoading = partnersLoading;
+
   const { data: ledger, isLoading: ledgerLoading } = useQuery({
     queryKey: ["cash-ledger", from, to],
     queryFn: () => api.get<CashLedgerRow[]>(`/cash/ledger${qs ? `?${qs}` : ""}`),
@@ -139,53 +161,62 @@ export default function CashOperationsPage() {
         </Button>
       </div>
 
+      {/* Foydalanuvchi so'roviga ko'ra: umumiy moliyaviy holat - davrga
+          bog'liq bo'lmagan, har doim hozirgi holat. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card>
           <CardHeader className="flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Joriy kassa qoldig&apos;i
+              Qozondagi pul
             </CardTitle>
-            <Wallet className="h-4 w-4 text-muted-foreground" />
+            <CircleDollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {summaryLoading ? (
+            {potLoading ? (
               <Skeleton className="h-7 w-32" />
             ) : (
-              <p className="text-xl font-semibold">{formatMoney(summary?.currentBalanceUzs ?? 0)}</p>
+              <>
+                <p className="text-xl font-semibold">{formatMoney(potMoneyUzs)}</p>
+                <p className="text-xs text-muted-foreground">Kassa + Buxgalteriya</p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Qarzlarim</CardTitle>
+            <TrendingDown className="h-4 w-4 text-destructive" />
+          </CardHeader>
+          <CardContent>
+            {debtsLoading ? (
+              <Skeleton className="h-7 w-32" />
+            ) : (
+              <>
+                <p className="text-xl font-semibold text-destructive">{formatMoney(myDebtsUzs)}</p>
+                <p className="text-xs text-muted-foreground">Hamkorlarga qarzdor summa</p>
+              </>
             )}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Davr bo&apos;yicha kirim
+              Asosiy o&apos;zim pulim
             </CardTitle>
-            <ArrowDownCircle className="h-4 w-4 text-emerald-600" />
+            <Landmark className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            {summaryLoading ? (
+            {potLoading || debtsLoading ? (
               <Skeleton className="h-7 w-32" />
             ) : (
-              <p className="text-xl font-semibold text-emerald-600">
-                {formatMoney(summary?.periodInUzs ?? 0)}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Davr bo&apos;yicha chiqim
-            </CardTitle>
-            <ArrowUpCircle className="h-4 w-4 text-destructive" />
-          </CardHeader>
-          <CardContent>
-            {summaryLoading ? (
-              <Skeleton className="h-7 w-32" />
-            ) : (
-              <p className="text-xl font-semibold text-destructive">
-                {formatMoney(summary?.periodOutUzs ?? 0)}
-              </p>
+              <>
+                <p
+                  className={`text-xl font-semibold ${netOwnMoneyUzs >= 0 ? "" : "text-destructive"}`}
+                >
+                  {formatMoney(netOwnMoneyUzs)}
+                </p>
+                <p className="text-xs text-muted-foreground">Qozondagi pul − Qarzlarim</p>
+              </>
             )}
           </CardContent>
         </Card>
@@ -242,7 +273,12 @@ export default function CashOperationsPage() {
                     </TableCell>
                     <TableCell className="max-w-72 truncate">{r.description}</TableCell>
                     <TableCell>{r.partnerName ?? "-"}</TableCell>
-                    <TableCell>{paymentMethodLabels[r.method] ?? r.method}</TableCell>
+                    <TableCell>
+                      {paymentMethodLabels[r.method] ?? r.method}
+                      {r.bankAccount && (
+                        <p className="text-xs text-muted-foreground">{r.bankAccount}</p>
+                      )}
+                    </TableCell>
                     <TableCell
                       className={`text-right font-medium ${
                         r.direction === "in" ? "text-emerald-600" : "text-destructive"
@@ -281,6 +317,11 @@ export default function CashOperationsPage() {
                     </span>
                   </div>
                   <p>{r.description}</p>
+                  {r.bankAccount && (
+                    <p className="text-xs text-muted-foreground">
+                      {paymentMethodLabels[r.method] ?? r.method}: {r.bankAccount}
+                    </p>
+                  )}
                   <div className="flex items-center justify-between text-muted-foreground">
                     <span>{r.partnerName ?? "-"}</span>
                     <span

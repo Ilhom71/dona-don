@@ -176,6 +176,7 @@ export default function ArchivePage() {
       queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -226,37 +227,55 @@ export default function ArchivePage() {
             {productsLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nomi</TableHead>
-                      <TableHead>Birlik</TableHead>
-                      <TableHead>Arxivlangan sana</TableHead>
-                      <TableHead className="w-32"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {products?.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.name}</TableCell>
-                        <TableCell>{unitLabels[p.unit]}</TableCell>
-                        <TableCell>{p.archivedAt ? formatDate(p.archivedAt) : "-"}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => restoreProduct.mutate(p.id)}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Tiklash
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nomi</TableHead>
+                        <TableHead>Birlik</TableHead>
+                        <TableHead>Arxivlangan sana</TableHead>
+                        <TableHead className="w-32"></TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {products?.map((p) => (
+                        <TableRow key={p.id}>
+                          <TableCell className="font-medium">{p.name}</TableCell>
+                          <TableCell>{unitLabels[p.unit]}</TableCell>
+                          <TableCell>{p.archivedAt ? formatDate(p.archivedAt) : "-"}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => restoreProduct.mutate(p.id)}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              Tiklash
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {products?.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 rounded-md border p-2.5 text-sm">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {unitLabels[p.unit]} - {p.archivedAt ? formatDate(p.archivedAt) : "-"}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => restoreProduct.mutate(p.id)}>
+                        <RotateCcw className="h-4 w-4" />
+                        Tiklash
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -273,37 +292,55 @@ export default function ArchivePage() {
             {partnersLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ismi / nomi</TableHead>
-                      <TableHead>Turi</TableHead>
-                      <TableHead>Arxivlangan sana</TableHead>
-                      <TableHead className="w-32"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {partners?.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.name}</TableCell>
-                        <TableCell>{partnerTypeLabels[p.type]}</TableCell>
-                        <TableCell>{p.archivedAt ? formatDate(p.archivedAt) : "-"}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => restorePartner.mutate(p.id)}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Tiklash
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ismi / nomi</TableHead>
+                        <TableHead>Turi</TableHead>
+                        <TableHead>Arxivlangan sana</TableHead>
+                        <TableHead className="w-32"></TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {partners?.map((p) => (
+                        <TableRow key={p.id}>
+                          <TableCell className="font-medium">{p.name}</TableCell>
+                          <TableCell>{partnerTypeLabels[p.type]}</TableCell>
+                          <TableCell>{p.archivedAt ? formatDate(p.archivedAt) : "-"}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => restorePartner.mutate(p.id)}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              Tiklash
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {partners?.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 rounded-md border p-2.5 text-sm">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {partnerTypeLabels[p.type]} - {p.archivedAt ? formatDate(p.archivedAt) : "-"}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => restorePartner.mutate(p.id)}>
+                        <RotateCcw className="h-4 w-4" />
+                        Tiklash
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -320,37 +357,55 @@ export default function ArchivePage() {
             {warehousesLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nomi</TableHead>
-                      <TableHead>Manzili</TableHead>
-                      <TableHead>Arxivlangan sana</TableHead>
-                      <TableHead className="w-32"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {warehouses?.map((w) => (
-                      <TableRow key={w.id}>
-                        <TableCell className="font-medium">{w.name}</TableCell>
-                        <TableCell>{w.address ?? "-"}</TableCell>
-                        <TableCell>{w.archivedAt ? formatDate(w.archivedAt) : "-"}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => restoreWarehouse.mutate(w.id)}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Tiklash
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nomi</TableHead>
+                        <TableHead>Manzili</TableHead>
+                        <TableHead>Arxivlangan sana</TableHead>
+                        <TableHead className="w-32"></TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {warehouses?.map((w) => (
+                        <TableRow key={w.id}>
+                          <TableCell className="font-medium">{w.name}</TableCell>
+                          <TableCell>{w.address ?? "-"}</TableCell>
+                          <TableCell>{w.archivedAt ? formatDate(w.archivedAt) : "-"}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => restoreWarehouse.mutate(w.id)}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              Tiklash
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {warehouses?.map((w) => (
+                    <div key={w.id} className="flex items-center justify-between gap-2 rounded-md border p-2.5 text-sm">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{w.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {w.address ?? "-"} - {w.archivedAt ? formatDate(w.archivedAt) : "-"}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => restoreWarehouse.mutate(w.id)}>
+                        <RotateCcw className="h-4 w-4" />
+                        Tiklash
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -367,32 +422,47 @@ export default function ArchivePage() {
             {cancelledSalesLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Sana</TableHead>
-                      <TableHead>Hamkor</TableHead>
-                      <TableHead className="text-right">Summa</TableHead>
-                      <TableHead>Sabab</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cancelledSales?.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell>{formatDate(s.saleDate)}</TableCell>
-                        <TableCell className="font-medium">{s.partner?.name ?? "-"}</TableCell>
-                        <TableCell className="text-right">
-                          {formatMoney(s.totalAmountUzs)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {s.cancelReason ?? "-"}
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Sana</TableHead>
+                        <TableHead>Hamkor</TableHead>
+                        <TableHead className="text-right">Summa</TableHead>
+                        <TableHead>Sabab</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {cancelledSales?.map((s) => (
+                        <TableRow key={s.id}>
+                          <TableCell>{formatDate(s.saleDate)}</TableCell>
+                          <TableCell className="font-medium">{s.partner?.name ?? "-"}</TableCell>
+                          <TableCell className="text-right">
+                            {formatMoney(s.totalAmountUzs)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {s.cancelReason ?? "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {cancelledSales?.map((s) => (
+                    <div key={s.id} className="rounded-md border p-2.5 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{s.partner?.name ?? "-"}</span>
+                        <span>{formatMoney(s.totalAmountUzs)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDate(s.saleDate)} - {s.cancelReason ?? "-"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
             <p className="mt-2 text-xs text-muted-foreground">
               Bekor qilingan savdolar tiklanmaydi (ombor bilan bog'liq bo'lgani uchun) - faqat
@@ -413,32 +483,47 @@ export default function ArchivePage() {
             {cancelledPurchasesLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Sana</TableHead>
-                      <TableHead>Hamkor</TableHead>
-                      <TableHead className="text-right">Summa</TableHead>
-                      <TableHead>Sabab</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cancelledPurchases?.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell>{formatDate(p.purchaseDate)}</TableCell>
-                        <TableCell className="font-medium">{p.partner?.name ?? "-"}</TableCell>
-                        <TableCell className="text-right">
-                          {formatMoney(p.totalAmountUzs)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {p.cancelReason ?? "-"}
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Sana</TableHead>
+                        <TableHead>Hamkor</TableHead>
+                        <TableHead className="text-right">Summa</TableHead>
+                        <TableHead>Sabab</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {cancelledPurchases?.map((p) => (
+                        <TableRow key={p.id}>
+                          <TableCell>{formatDate(p.purchaseDate)}</TableCell>
+                          <TableCell className="font-medium">{p.partner?.name ?? "-"}</TableCell>
+                          <TableCell className="text-right">
+                            {formatMoney(p.totalAmountUzs)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {p.cancelReason ?? "-"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {cancelledPurchases?.map((p) => (
+                    <div key={p.id} className="rounded-md border p-2.5 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{p.partner?.name ?? "-"}</span>
+                        <span>{formatMoney(p.totalAmountUzs)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDate(p.purchaseDate)} - {p.cancelReason ?? "-"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
             <p className="mt-2 text-xs text-muted-foreground">
               Bekor qilingan xaridlar tiklanmaydi (ombor bilan bog'liq bo'lgani uchun) - faqat
@@ -459,43 +544,69 @@ export default function ArchivePage() {
             {movementsLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Sana</TableHead>
-                      <TableHead>Turi</TableHead>
-                      <TableHead>Miqdor</TableHead>
-                      <TableHead>Izoh</TableHead>
-                      <TableHead className="w-32"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cancelledMovements.map((m) => (
-                      <TableRow key={m.id}>
-                        <TableCell>{formatDateTime(m.movementDate)}</TableCell>
-                        <TableCell>
-                          <Badge variant={m.type === "in" ? "default" : "secondary"}>
-                            {movementTypeLabels[m.type]}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{formatQuantity(m.quantity, productUnit(m.productId))}</TableCell>
-                        <TableCell className="text-muted-foreground">{m.note ?? "-"}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => restoreMovementMutation.mutate(m)}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Tiklash
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Sana</TableHead>
+                        <TableHead>Turi</TableHead>
+                        <TableHead>Miqdor</TableHead>
+                        <TableHead>Izoh</TableHead>
+                        <TableHead className="w-32"></TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {cancelledMovements.map((m) => (
+                        <TableRow key={m.id}>
+                          <TableCell>{formatDateTime(m.movementDate)}</TableCell>
+                          <TableCell>
+                            <Badge variant={m.type === "in" ? "default" : "secondary"}>
+                              {movementTypeLabels[m.type]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatQuantity(m.quantity, productUnit(m.productId))}</TableCell>
+                          <TableCell className="text-muted-foreground">{m.note ?? "-"}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => restoreMovementMutation.mutate(m)}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              Tiklash
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {cancelledMovements.map((m) => (
+                    <div key={m.id} className="space-y-1.5 rounded-md border p-2.5 text-sm">
+                      <div className="flex items-center justify-between">
+                        <Badge variant={m.type === "in" ? "default" : "secondary"}>
+                          {movementTypeLabels[m.type]}
+                        </Badge>
+                        <span>{formatQuantity(m.quantity, productUnit(m.productId))}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateTime(m.movementDate)} - {m.note ?? "-"}
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => restoreMovementMutation.mutate(m)}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        Tiklash
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -512,44 +623,71 @@ export default function ArchivePage() {
             {ledgerLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Sana</TableHead>
-                      <TableHead>Yo&apos;nalish</TableHead>
-                      <TableHead>Tavsif</TableHead>
-                      <TableHead className="text-right">Summa</TableHead>
-                      <TableHead className="w-32"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cancelledCashOps.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell>{formatDateTime(r.date)}</TableCell>
-                        <TableCell>
-                          <span className="flex items-center gap-1">
-                            <Ban className="h-3.5 w-3.5 text-destructive" />
-                            {cashDirectionLabels[r.direction]}
-                          </span>
-                        </TableCell>
-                        <TableCell>{r.description}</TableCell>
-                        <TableCell className="text-right">{formatMoney(r.amountUzs)}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => restoreCashOpMutation.mutate(r)}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Tiklash
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Sana</TableHead>
+                        <TableHead>Yo&apos;nalish</TableHead>
+                        <TableHead>Tavsif</TableHead>
+                        <TableHead className="text-right">Summa</TableHead>
+                        <TableHead className="w-32"></TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {cancelledCashOps.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell>{formatDateTime(r.date)}</TableCell>
+                          <TableCell>
+                            <span className="flex items-center gap-1">
+                              <Ban className="h-3.5 w-3.5 text-destructive" />
+                              {cashDirectionLabels[r.direction]}
+                            </span>
+                          </TableCell>
+                          <TableCell>{r.description}</TableCell>
+                          <TableCell className="text-right">{formatMoney(r.amountUzs)}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => restoreCashOpMutation.mutate(r)}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              Tiklash
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {cancelledCashOps.map((r) => (
+                    <div key={r.id} className="space-y-1.5 rounded-md border p-2.5 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Ban className="h-3.5 w-3.5 text-destructive" />
+                          {cashDirectionLabels[r.direction]}
+                        </span>
+                        <span>{formatMoney(r.amountUzs)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateTime(r.date)} - {r.description}
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => restoreCashOpMutation.mutate(r)}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        Tiklash
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -566,44 +704,71 @@ export default function ArchivePage() {
             {accountingLedgerLoading ? (
               <Skeleton className="h-16" />
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Sana</TableHead>
-                      <TableHead>Yo&apos;nalish</TableHead>
-                      <TableHead>Tavsif</TableHead>
-                      <TableHead className="text-right">Summa</TableHead>
-                      <TableHead className="w-32"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cancelledAccountingOps.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell>{formatDateTime(r.date)}</TableCell>
-                        <TableCell>
-                          <span className="flex items-center gap-1">
-                            <Ban className="h-3.5 w-3.5 text-destructive" />
-                            {cashDirectionLabels[r.direction]}
-                          </span>
-                        </TableCell>
-                        <TableCell>{r.description}</TableCell>
-                        <TableCell className="text-right">{formatMoney(r.amountUzs)}</TableCell>
-                        <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => restoreAccountingOpMutation.mutate(r)}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Tiklash
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Sana</TableHead>
+                        <TableHead>Yo&apos;nalish</TableHead>
+                        <TableHead>Tavsif</TableHead>
+                        <TableHead className="text-right">Summa</TableHead>
+                        <TableHead className="w-32"></TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {cancelledAccountingOps.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell>{formatDateTime(r.date)}</TableCell>
+                          <TableCell>
+                            <span className="flex items-center gap-1">
+                              <Ban className="h-3.5 w-3.5 text-destructive" />
+                              {cashDirectionLabels[r.direction]}
+                            </span>
+                          </TableCell>
+                          <TableCell>{r.description}</TableCell>
+                          <TableCell className="text-right">{formatMoney(r.amountUzs)}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => restoreAccountingOpMutation.mutate(r)}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                              Tiklash
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="space-y-2 md:hidden">
+                  {cancelledAccountingOps.map((r) => (
+                    <div key={r.id} className="space-y-1.5 rounded-md border p-2.5 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Ban className="h-3.5 w-3.5 text-destructive" />
+                          {cashDirectionLabels[r.direction]}
+                        </span>
+                        <span>{formatMoney(r.amountUzs)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateTime(r.date)} - {r.description}
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => restoreAccountingOpMutation.mutate(r)}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        Tiklash
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

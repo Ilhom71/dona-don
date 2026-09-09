@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { createSale, listSales, getSale, cancelSale } from "./service";
+import { createSale, updateSale, listSales, getSale, cancelSale } from "./service";
 import { requireAuth } from "../../middleware/auth";
 
 const saleSchema = z.object({
@@ -17,6 +17,8 @@ const saleSchema = z.object({
         unitPrice: z.number().positive(),
         // yuk puli (tashish xarajati), doim UZS, ixtiyoriy - kiritilmasa 0
         freightCostUzs: z.number().nonnegative().nullable().optional(),
+        // Qaysi partiyadan sotilsin (ixtiyoriy) - berilmasa avtomatik FIFO
+        lotId: z.string().uuid().nullable().optional(),
       })
     )
     .min(1),
@@ -24,6 +26,9 @@ const saleSchema = z.object({
   paymentMethod: z.enum(["cash", "card", "bank"]).optional(),
   notes: z.string().nullable().optional(),
 });
+
+// Tahrirlashda to'lov o'zgartirilmaydi - initialPayment/paymentMethod yo'q.
+const saleUpdateSchema = saleSchema.omit({ initialPayment: true, paymentMethod: true });
 
 const cancelSchema = z.object({
   reason: z.string().nullable().optional(),
@@ -63,6 +68,20 @@ saleRoutes.post("/", async (c) => {
   try {
     const sale = await createSale(parsed.data);
     return c.json(sale, 201);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+saleRoutes.put("/:id", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = saleUpdateSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
+  }
+  try {
+    const sale = await updateSale(c.req.param("id"), parsed.data);
+    return c.json(sale);
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }

@@ -1,7 +1,19 @@
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNull, lte } from "drizzle-orm";
 import { db } from "../../db";
-import { products, stockMovements, productStock, sales, purchases } from "../../db/schema";
+import {
+  products,
+  stockMovements,
+  productStock,
+  sales,
+  purchases,
+  partners,
+  warehouses,
+  stockLots,
+  stockLotConsumptions,
+} from "../../db/schema";
 import { getCurrentRate } from "../settings/service";
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 type CreateMovementInput = {
   productId: string;
@@ -94,6 +106,221 @@ export async function recomputeProductAggregate(
     .where(eq(products.id, productId));
 }
 
+// ---------- FIFO partiya (lot) kitobi ----------
+// product_stock.avgCostUzs (yuqorida) faqat KO'RSATISH/baholash uchun
+// og'irlikli o'rtacha bo'lib qolaveradi. Haqiqiy sotuv tannarxi (COGS) endi
+// shu yerdagi partiyalardan FIFO tartibida olinadi - shunda yangi narxda
+// kirim qilingan mahsulot eski partiyaning (hali sotilmagan qoldiqning)
+// tannarxiga ta'sir qilmaydi.
+
+/** Yangi partiya yaratadi (xarid/qo'lda kirim/transfer-kirim). */
+export async function createLot(
+  tx: Tx,
+  params: {
+    productId: string;
+    warehouseId: string;
+    unitCostUzs: number;
+    quantity: number;
+    source: "purchase" | "manual" | "transfer";
+    purchaseId?: string | null;
+    movementId?: string | null;
+    receivedAt: Date;
+  }
+) {
+  const [lot] = await tx
+    .insert(stockLots)
+    .values({
+      productId: params.productId,
+      warehouseId: params.warehouseId,
+      unitCostUzs: String(params.unitCostUzs),
+      quantity: String(params.quantity),
+      remainingQuantity: String(params.quantity),
+      source: params.source,
+      purchaseId: params.purchaseId ?? null,
+      movementId: params.movementId ?? null,
+      receivedAt: params.receivedAt,
+    })
+    .returning();
+  if (!lot) throw new Error("Partiya yozuvini yaratib bo'lmadi");
+  return lot;
+}
+
+/**
+ * Berilgan mahsulot/ombor uchun eng eski (receivedAt) faol partiyalardan
+ * navbat bilan (FIFO) yechadi - bir nechtasidan yechilsa, natijaviy
+ * og'irlikli o'rtacha narx (weightedUnitCostUzs) qaytariladi (savdo
+ * qatorining costPriceUzsSnapshot'iga yoziladi). Agar `lotId` berilsa,
+ * FIFO'ni chetlab, faqat o'sha bitta (foydalanuvchi qo'lda tanlagan)
+ * partiyadan yechiladi - masalan savdoda "qaysi narxdagi partiyadan
+ * sotilsin" deb aniq tanlanganda.
+ */
+export async function consumeLotsFifo(
+  tx: Tx,
+  params: {
+    productId: string;
+    warehouseId: string;
+    quantity: number;
+    unitLabel?: string;
+    lotId?: string | null;
+  }
+) {
+  const conditions = [
+    eq(stockLots.productId, params.productId),
+    eq(stockLots.warehouseId, params.warehouseId),
+    isNull(stockLots.cancelledAt),
+    gt(stockLots.remainingQuantity, "0"),
+  ];
+  if (params.lotId) conditions.push(eq(stockLots.id, params.lotId));
+
+  const lots = await tx
+    .select()
+    .from(stockLots)
+    .where(and(...conditions))
+    .orderBy(asc(stockLots.receivedAt), asc(stockLots.createdAt))
+    .for("update");
+
+  const totalAvailable = lots.reduce((sum, l) => sum + Number(l.remainingQuantity), 0);
+  if (params.quantity > totalAvailable) {
+    const label = params.lotId ? "Bu partiyada" : "Bu omborda";
+    throw new Error(
+      `${label} yetarli mahsulot yo'q. Qoldiq: ${totalAvailable} ${params.unitLabel ?? ""}`.trim()
+    );
+  }
+
+  let remaining = params.quantity;
+  const consumptions: { lotId: string; quantity: number; unitCostUzs: number }[] = [];
+  for (const lot of lots) {
+    if (remaining <= 0) break;
+    const lotRemaining = Number(lot.remainingQuantity);
+    const take = Math.min(lotRemaining, remaining);
+    if (take <= 0) continue;
+    await tx
+      .update(stockLots)
+      .set({ remainingQuantity: String(lotRemaining - take) })
+      .where(eq(stockLots.id, lot.id));
+    consumptions.push({ lotId: lot.id, quantity: take, unitCostUzs: Number(lot.unitCostUzs) });
+    remaining -= take;
+  }
+
+  const totalCostUzs = consumptions.reduce((sum, c) => sum + c.quantity * c.unitCostUzs, 0);
+  const weightedUnitCostUzs = params.quantity > 0 ? totalCostUzs / params.quantity : 0;
+
+  return { consumptions, weightedUnitCostUzs, totalCostUzs };
+}
+
+/** `consumeLotsFifo` natijasini `stock_lot_consumptions`ga yozadi (savdo qatori yoki qo'lda/transfer chiqim yozuvi bilan bog'lab). */
+export async function recordConsumptions(
+  tx: Tx,
+  consumptions: { lotId: string; quantity: number; unitCostUzs: number }[],
+  link: { saleItemId?: string; movementId?: string }
+) {
+  if (consumptions.length === 0) return;
+  await tx.insert(stockLotConsumptions).values(
+    consumptions.map((c) => ({
+      lotId: c.lotId,
+      quantity: String(c.quantity),
+      unitCostUzs: String(c.unitCostUzs),
+      saleItemId: link.saleItemId ?? null,
+      movementId: link.movementId ?? null,
+    }))
+  );
+}
+
+function consumptionCondition(params: { saleItemId?: string; movementId?: string }) {
+  if (params.saleItemId) return eq(stockLotConsumptions.saleItemId, params.saleItemId);
+  if (params.movementId) return eq(stockLotConsumptions.movementId, params.movementId);
+  return undefined;
+}
+
+/** Savdo/qo'lda chiqim bekor qilinganda - o'sha aniq partiya(lar)ga qoldiqni qaytaradi. */
+export async function reverseConsumptions(
+  tx: Tx,
+  params: { saleItemId?: string; movementId?: string }
+) {
+  const condition = consumptionCondition(params);
+  if (!condition) return;
+
+  const rows = await tx.select().from(stockLotConsumptions).where(condition);
+  for (const row of rows) {
+    const [lot] = await tx.select().from(stockLots).where(eq(stockLots.id, row.lotId)).for("update");
+    if (!lot) continue;
+    await tx
+      .update(stockLots)
+      .set({ remainingQuantity: String(Number(lot.remainingQuantity) + Number(row.quantity)) })
+      .where(eq(stockLots.id, lot.id));
+  }
+}
+
+/** Bekor qilingan yozuv tiklanganda - o'sha aniq partiya(lar)dan xuddi shu miqdorni qayta yechadi. */
+export async function replayConsumptions(
+  tx: Tx,
+  params: { saleItemId?: string; movementId?: string }
+) {
+  const condition = consumptionCondition(params);
+  if (!condition) return;
+
+  const rows = await tx.select().from(stockLotConsumptions).where(condition);
+  for (const row of rows) {
+    const [lot] = await tx.select().from(stockLots).where(eq(stockLots.id, row.lotId)).for("update");
+    if (!lot) continue;
+    const remaining = Number(lot.remainingQuantity);
+    const need = Number(row.quantity);
+    if (need > remaining) {
+      throw new Error(
+        `Tiklab bo'lmaydi: partiyada endi yetarli qoldiq yo'q (kerak ${need}, mavjud ${remaining})`
+      );
+    }
+    await tx
+      .update(stockLots)
+      .set({ remainingQuantity: String(remaining - need) })
+      .where(eq(stockLots.id, lot.id));
+  }
+}
+
+/**
+ * Xarid/qo'lda kirim bekor qilinganda shu operatsiya yaratgan partiya(lar)ni
+ * bekor qiladi. Agar partiya allaqachon qisman/to'liq ishlatilgan (sotilgan/
+ * ko'chirilgan) bo'lsa - xato qaytaradi (bekor qilib bo'lmaydi).
+ */
+export async function cancelLotsForCreation(
+  tx: Tx,
+  params: { purchaseId?: string; movementId?: string; reason?: string | null }
+) {
+  const condition = params.purchaseId
+    ? eq(stockLots.purchaseId, params.purchaseId)
+    : params.movementId
+      ? eq(stockLots.movementId, params.movementId)
+      : undefined;
+  if (!condition) return;
+
+  const lots = await tx.select().from(stockLots).where(condition).for("update");
+  for (const lot of lots) {
+    if (lot.cancelledAt) continue;
+    if (Number(lot.remainingQuantity) !== Number(lot.quantity)) {
+      throw new Error("Bu mahsulot allaqachon ishlatilgan (sotilgan/ko'chirilgan), bekor qilib bo'lmaydi");
+    }
+  }
+  for (const lot of lots) {
+    if (lot.cancelledAt) continue;
+    await tx
+      .update(stockLots)
+      .set({ remainingQuantity: "0", cancelledAt: new Date(), cancelReason: params.reason ?? null })
+      .where(eq(stockLots.id, lot.id));
+  }
+}
+
+/** Faqat qo'lda kiritilgan kirim yozuvi tiklanganda - shu yozuv yaratgan partiyani qayta faollashtiradi. */
+export async function restoreLotsForCreation(tx: Tx, params: { movementId: string }) {
+  const lots = await tx.select().from(stockLots).where(eq(stockLots.movementId, params.movementId)).for("update");
+  for (const lot of lots) {
+    if (!lot.cancelledAt) continue;
+    await tx
+      .update(stockLots)
+      .set({ remainingQuantity: lot.quantity, cancelledAt: null, cancelReason: null })
+      .where(eq(stockLots.id, lot.id));
+  }
+}
+
 /**
  * Ombor kirim/chiqimini yozib, o'sha ombordagi qoldiqni va mahsulotning umumiy
  * (barcha ombor) qoldig'ini bitta tranzaksiya ichida yangilaydi. Yozuvlar
@@ -113,7 +340,23 @@ export async function createMovement(input: CreateMovementInput) {
           : input.pricePerUnit
         : null;
 
-    await adjustWarehouseStock(tx, {
+    let consumption: Awaited<ReturnType<typeof consumeLotsFifo>> | null = null;
+    if (input.type === "out") {
+      // Partiyalarni AVVAL yechamiz (yetarli bo'lmasa shu yerda aniq partiya
+      // darajasida xato chiqadi) - keyin keshni (product_stock) yangilaymiz.
+      try {
+        consumption = await consumeLotsFifo(tx, {
+          productId: input.productId,
+          warehouseId: input.warehouseId,
+          quantity: input.quantity,
+          unitLabel: product.unit,
+        });
+      } catch (err) {
+        throw new Error(`"${product.name}": ${(err as Error).message}`);
+      }
+    }
+
+    const adjustResult = await adjustWarehouseStock(tx, {
       productId: input.productId,
       warehouseId: input.warehouseId,
       type: input.type,
@@ -140,6 +383,22 @@ export async function createMovement(input: CreateMovementInput) {
         movementDate: input.movementDate ?? new Date(),
       })
       .returning();
+
+    if (!movement) throw new Error("Kirim-chiqim yozuvini yaratib bo'lmadi");
+
+    if (input.type === "in") {
+      await createLot(tx, {
+        productId: input.productId,
+        warehouseId: input.warehouseId,
+        unitCostUzs: priceUzs ?? adjustResult.previousCostUzs,
+        quantity: input.quantity,
+        source: "manual",
+        movementId: movement.id,
+        receivedAt: input.movementDate ?? new Date(),
+      });
+    } else if (consumption) {
+      await recordConsumptions(tx, consumption.consumptions, { movementId: movement.id });
+    }
 
     return movement;
   });
@@ -174,7 +433,17 @@ export async function createTransfer(input: CreateTransferInput) {
     const [product] = await tx.select().from(products).where(eq(products.id, input.productId));
     if (!product) throw new Error("Mahsulot topilmadi");
 
-    const outResult = await adjustWarehouseStock(tx, {
+    // Manba ombordagi partiyalardan FIFO tartibida yechamiz - shu orqali
+    // maqsad omborga aynan qancha narxda ko'chirilgani (bir nechta partiyadan
+    // aralashgan bo'lsa - og'irlikli o'rtachasi) aniqlanadi.
+    const consumption = await consumeLotsFifo(tx, {
+      productId: input.productId,
+      warehouseId: input.fromWarehouseId,
+      quantity: input.quantity,
+      unitLabel: product.unit,
+    });
+
+    await adjustWarehouseStock(tx, {
       productId: input.productId,
       warehouseId: input.fromWarehouseId,
       type: "out",
@@ -183,12 +452,15 @@ export async function createTransfer(input: CreateTransferInput) {
       unitLabel: product.unit,
     });
 
+    // Maqsad omborga - manbadan aynan FIFO tartibida yechilgan partiyalarning
+    // haqiqiy narxi bilan (kesh o'rtachasi emas - agar manba omborda bir
+    // nechta narxdagi partiya bo'lsa, ular boshqacha bo'lishi mumkin edi).
     await adjustWarehouseStock(tx, {
       productId: input.productId,
       warehouseId: input.toWarehouseId,
       type: "in",
       quantity: input.quantity,
-      priceUzs: outResult.previousCostUzs,
+      priceUzs: consumption.weightedUnitCostUzs,
       unitLabel: product.unit,
     });
 
@@ -203,7 +475,7 @@ export async function createTransfer(input: CreateTransferInput) {
         type: "out",
         source: "transfer",
         quantity: String(input.quantity),
-        pricePerUnit: String(outResult.previousCostUzs),
+        pricePerUnit: String(consumption.weightedUnitCostUzs),
         currency: "UZS",
         exchangeRateSnapshot: String(rate),
         warehouseId: input.fromWarehouseId,
@@ -213,20 +485,39 @@ export async function createTransfer(input: CreateTransferInput) {
         movementDate: date,
       })
       .returning();
+    if (!outMovement) throw new Error("Transfer yozuvini yaratib bo'lmadi");
 
-    await tx.insert(stockMovements).values({
+    await recordConsumptions(tx, consumption.consumptions, { movementId: outMovement.id });
+
+    const [inMovement] = await tx
+      .insert(stockMovements)
+      .values({
+        productId: input.productId,
+        type: "in",
+        source: "transfer",
+        quantity: String(input.quantity),
+        pricePerUnit: String(consumption.weightedUnitCostUzs),
+        currency: "UZS",
+        exchangeRateSnapshot: String(rate),
+        warehouseId: input.toWarehouseId,
+        transferGroupId,
+        vehicleNumber: input.vehicleNumber ?? null,
+        note: input.note ?? null,
+        movementDate: date,
+      })
+      .returning();
+    if (!inMovement) throw new Error("Transfer yozuvini yaratib bo'lmadi");
+
+    // Maqsad omborga - manbadan yechilgan partiyalarning haqiqiy (FIFO)
+    // og'irlikli o'rtacha narxi bilan yangi partiya.
+    await createLot(tx, {
       productId: input.productId,
-      type: "in",
-      source: "transfer",
-      quantity: String(input.quantity),
-      pricePerUnit: String(outResult.previousCostUzs),
-      currency: "UZS",
-      exchangeRateSnapshot: String(rate),
       warehouseId: input.toWarehouseId,
-      transferGroupId,
-      vehicleNumber: input.vehicleNumber ?? null,
-      note: input.note ?? null,
-      movementDate: date,
+      unitCostUzs: consumption.weightedUnitCostUzs,
+      quantity: input.quantity,
+      source: "transfer",
+      movementId: inMovement.id,
+      receivedAt: date,
     });
 
     return outMovement;
@@ -319,6 +610,14 @@ export async function cancelMovement(id: string, reason?: string | null) {
           : Number(movement.pricePerUnit)
         : null;
 
+    // Partiya darajasidagi tekshiruv/bekor qilish - kesh (product_stock)
+    // yangilanishidan OLDIN, chunki bu qattiqroq/aniqroq gate.
+    if (movement.type === "in") {
+      await cancelLotsForCreation(tx, { movementId: movement.id, reason });
+    } else {
+      await reverseConsumptions(tx, { movementId: movement.id });
+    }
+
     await adjustWarehouseStock(tx, {
       productId: movement.productId,
       warehouseId: movement.warehouseId,
@@ -356,6 +655,12 @@ export async function restoreMovement(id: string) {
           : Number(movement.pricePerUnit)
         : null;
 
+    if (movement.type === "in") {
+      await restoreLotsForCreation(tx, { movementId: movement.id });
+    } else {
+      await replayConsumptions(tx, { movementId: movement.id });
+    }
+
     await adjustWarehouseStock(tx, {
       productId: movement.productId,
       warehouseId: movement.warehouseId,
@@ -389,4 +694,41 @@ export async function listProductStock(filters: { productId?: string; warehouseI
   // Arxivlangan (o'chirilgan) mahsulot YOKI ombor qoldig'i ombor
   // ko'rinishlarida ko'rsatilmaydi - boshqa "o'chirish" oqimlari bilan bir xil naqsh.
   return rows.filter((r) => !r.product?.archivedAt && !r.warehouse?.archivedAt);
+}
+
+/**
+ * Har xil narxda kirim qilingan (masalan har xil hamkordan olingan)
+ * bug'doyning har biri alohida "partiya" sifatida ko'rinishi uchun - faol
+ * (hali sotilib tugamagan, bekor qilinmagan) partiyalarni eng eskisidan
+ * boshlab qaytaradi. Yangi savdoda "qaysi partiyadan sotilsin" tanlovi va
+ * Omborlar sahifasidagi narx bo'yicha ajratilgan qoldiq shu yerdan olinadi.
+ */
+export async function listActiveLots(filters: { productId?: string; warehouseId?: string }) {
+  const conditions = [isNull(stockLots.cancelledAt), gt(stockLots.remainingQuantity, "0")];
+  if (filters.productId) conditions.push(eq(stockLots.productId, filters.productId));
+  if (filters.warehouseId) conditions.push(eq(stockLots.warehouseId, filters.warehouseId));
+
+  return db
+    .select({
+      id: stockLots.id,
+      productId: stockLots.productId,
+      warehouseId: stockLots.warehouseId,
+      unitCostUzs: stockLots.unitCostUzs,
+      quantity: stockLots.quantity,
+      remainingQuantity: stockLots.remainingQuantity,
+      source: stockLots.source,
+      receivedAt: stockLots.receivedAt,
+      productName: products.name,
+      unit: products.unit,
+      warehouseName: warehouses.name,
+      // Faqat xariddan kelgan partiyalarda bo'ladi - qaysi hamkordan olingani.
+      supplierName: partners.name,
+    })
+    .from(stockLots)
+    .innerJoin(products, eq(stockLots.productId, products.id))
+    .innerJoin(warehouses, eq(stockLots.warehouseId, warehouses.id))
+    .leftJoin(purchases, eq(stockLots.purchaseId, purchases.id))
+    .leftJoin(partners, eq(purchases.partnerId, partners.id))
+    .where(and(...conditions))
+    .orderBy(asc(stockLots.receivedAt));
 }

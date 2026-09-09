@@ -8,7 +8,7 @@
     "start": "bun run src/index.ts",
     "seed": "bun run src/db/seed.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "drizzle-kit migrate && bun run src/db/backfill-stock-lots.ts",
     "db:studio": "drizzle-kit studio"
   },
   "devDependencies": {

@@ -39,6 +39,24 @@ export type ProductStock = {
   warehouse?: Warehouse;
 };
 
+// Har xil narxda kirim qilingan (masalan har xil hamkordan olingan) bug'doy
+// har biri o'z narxi bilan alohida "partiya" sifatida - Omborlar sahifasi va
+// Yangi savdodagi "partiya" tanlovi shu yerdan olinadi.
+export type StockLot = {
+  id: string;
+  productId: string;
+  warehouseId: string;
+  unitCostUzs: string;
+  quantity: string;
+  remainingQuantity: string;
+  source: MovementSource;
+  receivedAt: string;
+  productName: string;
+  unit: Unit;
+  warehouseName: string;
+  supplierName: string | null;
+};
+
 export type Product = {
   id: string;
   name: string;
@@ -58,6 +76,7 @@ export type Partner = {
   name: string;
   phone: string | null;
   address: string | null;
+  bankAccount: string | null;
   type: PartnerType;
   notes: string | null;
   archivedAt: string | null;
@@ -223,6 +242,7 @@ export type CashLedgerRow = {
   category: string;
   partnerName: string | null;
   method: string;
+  bankAccount: string | null;
   description: string;
   amountUzs: number;
   cancelled: boolean;
@@ -233,6 +253,28 @@ export type CashSummary = {
   currentBalanceUzs: number;
   periodInUzs: number;
   periodOutUzs: number;
+};
+
+export type DayClosing = {
+  id: string;
+  closingDate: string;
+  kassaBalanceUzs: string;
+  warehouseStockValueUzs: string;
+  todaySalesUzs: string;
+  periodInUzs: string;
+  periodOutUzs: string;
+  note: string | null;
+  closedAt: string;
+};
+
+export type DayStatus = {
+  date: string;
+  opened: boolean;
+  closed: boolean;
+  // Savdo qilish mumkinmi - opened && !closed.
+  canSell: boolean;
+  openedAt: string | null;
+  closedAt: string | null;
 };
 
 export type AccountingReport = {
@@ -254,6 +296,7 @@ export type AccountingReport = {
 
 export type DashboardSummary = {
   stockValueUzs: number;
+  stockWeightKg: number;
   todaySalesUzs: number;
   todaySalesCount: number;
   monthSalesUzs: number;

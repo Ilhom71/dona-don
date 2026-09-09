@@ -2,14 +2,18 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "../../db";
 import { products, purchases, purchaseItems, stockMovements } from "../../db/schema";
 import { getCurrentRate } from "../settings/service";
-import { adjustWarehouseStock, recomputeProductAggregate } from "../stock/service";
+import {
+  adjustWarehouseStock,
+  recomputeProductAggregate,
+  createLot,
+  cancelLotsForCreation,
+} from "../stock/service";
 import { createExpense } from "../expenses/service";
 
 type PurchaseItemInput = {
   productId: string;
   quantity: number;
   unitPrice: number;
-  freightCostUzs?: number | null; // yuk puli (tashish xarajati), doim UZS, ixtiyoriy
 };
 
 type CreatePurchaseInput = {
@@ -24,6 +28,18 @@ type CreatePurchaseInput = {
   notes?: string | null;
 };
 
+// Tahrirlashda to'lov o'zgartirilmaydi (mavjud paidAmountUzs saqlanadi, faqat
+// yangi jamiga qarab holat qayta hisoblanadi) - shuning uchun initialPayment yo'q.
+type UpdatePurchaseInput = {
+  partnerId: string;
+  warehouseId: string;
+  vehicleNumber?: string | null;
+  purchaseDate?: Date;
+  currency: "UZS" | "USD";
+  items: PurchaseItemInput[];
+  notes?: string | null;
+};
+
 function paymentStatusFor(paidUzs: number, totalUzs: number): "paid" | "partial" | "credit" {
   if (paidUzs <= 0) return "credit";
   if (paidUzs >= totalUzs) return "paid";
@@ -32,10 +48,9 @@ function paymentStatusFor(paidUzs: number, totalUzs: number): "paid" | "partial"
 
 /**
  * Yangi xarid (kirim) yaratadi: tanlangan omborga mahsulotlarni qo'shadi
- * (kirim yozuvlari bilan birga, yuk puli ham hisobga olingan "landed cost"
- * bilan og'irlikli o'rtacha tannarxni yangilaydi), umumiy summani hisoblaydi
- * va ixtiyoriy boshlang'ich to'lovni (yetkazib beruvchiga) qayd etadi.
- * Hammasi bitta tranzaksiyada bajariladi - sales/createSale'ga parallel.
+ * (kirim yozuvlari bilan birga tannarxni ham yangilaydi), umumiy summani
+ * hisoblaydi va ixtiyoriy boshlang'ich to'lovni (yetkazib beruvchiga) qayd
+ * etadi. Hammasi bitta tranzaksiyada bajariladi - sales/createSale'ga parallel.
  */
 export async function createPurchase(input: CreatePurchaseInput) {
   if (input.items.length === 0) throw new Error("Xaridda kamida bitta mahsulot bo'lishi kerak");
@@ -43,15 +58,13 @@ export async function createPurchase(input: CreatePurchaseInput) {
   const rate = await getCurrentRate();
 
   return db.transaction(async (tx) => {
-    let totalAmount = 0; // mahsulotlar summasi, xarid valyutasida (yuk pulisiz)
-    let freightTotalUzs = 0;
+    let totalAmount = 0; // mahsulotlar summasi, xarid valyutasida
 
     const itemRows: {
       productId: string;
       quantity: string;
       unitPrice: string;
       subtotal: string;
-      freightCostUzs: string;
       landedCostUzsSnapshot: string;
     }[] = [];
 
@@ -61,13 +74,11 @@ export async function createPurchase(input: CreatePurchaseInput) {
 
       const subtotal = item.quantity * item.unitPrice;
       const subtotalUzs = input.currency === "USD" ? subtotal * rate : subtotal;
-      const freightCostUzs = item.freightCostUzs ?? 0;
       totalAmount += subtotal;
-      freightTotalUzs += freightCostUzs;
 
-      // Landed cost: mahsulot narxi + yuk puli, bir birlikka bo'lingan holda -
-      // shu qiymat omborning og'irlikli o'rtacha tannarxini yangilash uchun ishlatiladi.
-      const landedCostUzs = (subtotalUzs + freightCostUzs) / item.quantity;
+      // Landed cost - bitta birlik uchun UZS narx, omborning tannarxini
+      // yangilash uchun ishlatiladi.
+      const landedCostUzs = subtotalUzs / item.quantity;
 
       try {
         await adjustWarehouseStock(tx, {
@@ -87,15 +98,14 @@ export async function createPurchase(input: CreatePurchaseInput) {
         quantity: String(item.quantity),
         unitPrice: String(item.unitPrice),
         subtotal: String(subtotal),
-        freightCostUzs: String(freightCostUzs),
         landedCostUzsSnapshot: String(landedCostUzs),
       });
 
       await recomputeProductAggregate(tx, item.productId);
     }
 
-    // Umumiy qarz (totalAmountUzs) = mahsulotlar summasi (UZS'ga o'girilgan) + yuk puli yig'indisi.
-    const totalAmountUzs = (input.currency === "USD" ? totalAmount * rate : totalAmount) + freightTotalUzs;
+    // Umumiy qarz (totalAmountUzs) = mahsulotlar summasi, UZS'ga o'girilgan.
+    const totalAmountUzs = input.currency === "USD" ? totalAmount * rate : totalAmount;
     const initialPayment = input.initialPayment ?? 0;
     const paidAmountUzs = input.currency === "USD" ? initialPayment * rate : initialPayment;
 
@@ -119,6 +129,21 @@ export async function createPurchase(input: CreatePurchaseInput) {
     if (!purchase) throw new Error("Xarid yozuvini yaratib bo'lmadi");
 
     await tx.insert(purchaseItems).values(itemRows.map((r) => ({ ...r, purchaseId: purchase.id })));
+
+    // Har bir xarid qatori uchun alohida FIFO partiya - narxi (landed cost)
+    // hech qachon o'zgarmaydi, keyingi boshqa narxdagi kirim bunga ta'sir
+    // qilmaydi (eski qoldiq sotilganda aynan shu narx ishlatiladi).
+    for (const row of itemRows) {
+      await createLot(tx, {
+        productId: row.productId,
+        warehouseId: input.warehouseId,
+        unitCostUzs: Number(row.landedCostUzsSnapshot),
+        quantity: Number(row.quantity),
+        source: "purchase",
+        purchaseId: purchase.id,
+        receivedAt: input.purchaseDate ?? new Date(),
+      });
+    }
 
     await tx.insert(stockMovements).values(
       input.items.map((item) => ({
@@ -158,6 +183,157 @@ export async function createPurchase(input: CreatePurchaseInput) {
 }
 
 /**
+ * Mavjud xaridni tahrirlaydi (miqdor, narx, mahsulot, ombor va h.k.) -
+ * foydalanuvchi so'roviga ko'ra bu yerda "immutable ledger" qoidasidan
+ * ATAYLAB voz kechilgan (savdo/xarid odatda faqat bekor qilinadi, lekin
+ * bu funksiya haqiqiy tahrirlash uchun). Ichida: avval eski itemlar
+ * yaratgan partiyalar "retire" qilinadi (agar ular allaqachon qisman
+ * sotilgan/ko'chirilgan bo'lsa - xuddi bekor qilishdagi kabi xato beradi,
+ * chunki tahrirlash ham stokni orqaga qaytarishni talab qiladi), keyin
+ * eski yozuvlar o'chirilib, yangi qiymatlar bilan xuddi createPurchase kabi
+ * qayta yaratiladi - lekin xaridning ID'si va to'lov holati (paidAmountUzs)
+ * saqlanib qoladi.
+ */
+export async function updatePurchase(id: string, input: UpdatePurchaseInput) {
+  if (input.items.length === 0) throw new Error("Xaridda kamida bitta mahsulot bo'lishi kerak");
+
+  const rate = await getCurrentRate();
+
+  return db.transaction(async (tx) => {
+    const existing = await tx.query.purchases.findFirst({
+      where: eq(purchases.id, id),
+      with: { items: true },
+    });
+    if (!existing) throw new Error("Xarid topilmadi");
+    if (existing.cancelledAt) throw new Error("Bekor qilingan xaridni tahrirlab bo'lmaydi");
+    if (!existing.warehouseId) throw new Error("Xaridning ombori aniqlanmagan, tahrirlab bo'lmaydi");
+
+    // 1) Eski itemlar yaratgan partiyalarni "retire" qilamiz - agar allaqachon
+    // ishlatilgan (sotilgan/ko'chirilgan) bo'lsa, shu yerda xato chiqadi.
+    await cancelLotsForCreation(tx, { purchaseId: id, reason: "Tahrirlash uchun almashtirildi" });
+
+    // 2) Eski itemlar bo'yicha kesh (product_stock)ni orqaga qaytaramiz.
+    for (const item of existing.items) {
+      const [product] = await tx.select().from(products).where(eq(products.id, item.productId));
+      await adjustWarehouseStock(tx, {
+        productId: item.productId,
+        warehouseId: existing.warehouseId,
+        type: "out",
+        quantity: Number(item.quantity),
+        priceUzs: null,
+        unitLabel: product?.unit ?? "kg",
+      });
+      await recomputeProductAggregate(tx, item.productId);
+    }
+
+    // 3) Eski yozuvlarni tozalaymiz (bu xaridga tegishli purchaseItems va
+    // "purchase" manbali stock_movements) - yangilari pastda yaratiladi.
+    await tx.delete(purchaseItems).where(eq(purchaseItems.purchaseId, id));
+    await tx
+      .delete(stockMovements)
+      .where(and(eq(stockMovements.purchaseId, id), eq(stockMovements.source, "purchase")));
+
+    // 4) Yangi itemlarni createPurchase'dagi bilan bir xil mantiqda qo'shamiz.
+    let totalAmount = 0;
+    const itemRows: {
+      productId: string;
+      quantity: string;
+      unitPrice: string;
+      subtotal: string;
+      landedCostUzsSnapshot: string;
+    }[] = [];
+
+    for (const item of input.items) {
+      const [product] = await tx.select().from(products).where(eq(products.id, item.productId));
+      if (!product) throw new Error("Mahsulot topilmadi");
+
+      const subtotal = item.quantity * item.unitPrice;
+      const subtotalUzs = input.currency === "USD" ? subtotal * rate : subtotal;
+      totalAmount += subtotal;
+      const landedCostUzs = subtotalUzs / item.quantity;
+
+      try {
+        await adjustWarehouseStock(tx, {
+          productId: item.productId,
+          warehouseId: input.warehouseId,
+          type: "in",
+          quantity: item.quantity,
+          priceUzs: landedCostUzs,
+          unitLabel: product.unit,
+        });
+      } catch (err) {
+        throw new Error(`"${product.name}": ${(err as Error).message}`);
+      }
+
+      itemRows.push({
+        productId: item.productId,
+        quantity: String(item.quantity),
+        unitPrice: String(item.unitPrice),
+        subtotal: String(subtotal),
+        landedCostUzsSnapshot: String(landedCostUzs),
+      });
+
+      await recomputeProductAggregate(tx, item.productId);
+    }
+
+    const totalAmountUzs = input.currency === "USD" ? totalAmount * rate : totalAmount;
+    const paidAmountUzs = Number(existing.paidAmountUzs);
+
+    const [updated] = await tx
+      .update(purchases)
+      .set({
+        partnerId: input.partnerId,
+        warehouseId: input.warehouseId,
+        vehicleNumber: input.vehicleNumber ?? null,
+        purchaseDate: input.purchaseDate ?? existing.purchaseDate,
+        currency: input.currency,
+        exchangeRateSnapshot: String(rate),
+        totalAmount: String(totalAmount),
+        totalAmountUzs: String(totalAmountUzs),
+        paymentStatus: paymentStatusFor(paidAmountUzs, totalAmountUzs),
+        notes: input.notes ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchases.id, id))
+      .returning();
+    if (!updated) throw new Error("Xaridni yangilab bo'lmadi");
+
+    await tx.insert(purchaseItems).values(itemRows.map((r) => ({ ...r, purchaseId: id })));
+
+    for (const row of itemRows) {
+      await createLot(tx, {
+        productId: row.productId,
+        warehouseId: input.warehouseId,
+        unitCostUzs: Number(row.landedCostUzsSnapshot),
+        quantity: Number(row.quantity),
+        source: "purchase",
+        purchaseId: id,
+        receivedAt: input.purchaseDate ?? existing.purchaseDate,
+      });
+    }
+
+    await tx.insert(stockMovements).values(
+      input.items.map((item) => ({
+        productId: item.productId,
+        type: "in" as const,
+        source: "purchase" as const,
+        quantity: String(item.quantity),
+        pricePerUnit: String(item.unitPrice),
+        currency: input.currency,
+        exchangeRateSnapshot: String(rate),
+        partnerId: input.partnerId,
+        warehouseId: input.warehouseId,
+        purchaseId: id,
+        vehicleNumber: input.vehicleNumber ?? null,
+        movementDate: input.purchaseDate ?? existing.purchaseDate,
+      }))
+    );
+
+    return updated;
+  });
+}
+
+/**
  * Xaridni bekor qiladi (storno). Loyihadagi "immutable ledger" qoidasiga ko'ra
  * yozuv o'chirilmaydi/tahrirlanmaydi - shuning uchun bu funksiya faqat:
  *  1) har bir mahsulot uchun ombordan teskari (chiqim, source="purchase_reversal")
@@ -179,6 +355,11 @@ export async function cancelPurchase(id: string, reason?: string | null) {
     if (!purchase.warehouseId) throw new Error("Xaridning ombori aniqlanmagan, bekor qilib bo'lmaydi");
 
     const rate = await getCurrentRate();
+
+    // Partiya darajasidagi tekshiruv AVVAL: agar bu xariddan kelgan mahsulot
+    // allaqachon qisman/to'liq sotilgan/ko'chirilgan bo'lsa, shu yerda aniq
+    // xato bilan to'xtaydi (butun tranzaksiya bekor bo'ladi).
+    await cancelLotsForCreation(tx, { purchaseId: purchase.id, reason });
 
     for (const item of purchase.items ?? []) {
       try {

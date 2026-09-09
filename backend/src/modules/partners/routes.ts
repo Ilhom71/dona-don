@@ -16,6 +16,7 @@ const partnerSchema = z.object({
   name: z.string().min(1),
   phone: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
+  bankAccount: z.string().nullable().optional(),
   type: z.enum(["customer", "supplier", "both"]),
   notes: z.string().nullable().optional(),
 });

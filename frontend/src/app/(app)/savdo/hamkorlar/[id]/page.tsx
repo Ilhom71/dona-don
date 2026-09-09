@@ -3,7 +3,7 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileSpreadsheet, Truck, Users, Wallet } from "lucide-react";
+import { ArrowLeft, Banknote, FileSpreadsheet, Pencil, Truck, Users, Wallet } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -17,11 +17,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaymentFormDialog } from "@/components/payment-form-dialog";
+import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
+import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { BalanceBadge } from "@/components/balance-badge";
 import { api, apiUrl } from "@/lib/api";
 import type { Partner, PartnerLedgerRow } from "@/lib/types";
 import {
-  formatDate,
+  formatDateTime,
   formatMoney,
   formatQuantity,
   partnerTypeLabels,
@@ -37,6 +39,8 @@ import {
 export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id]">) {
   const { id } = use(props.params);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data: partner, isLoading: partnerLoading } = useQuery({
     queryKey: ["partner", id],
@@ -67,14 +71,46 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
           >
             <ArrowLeft className="h-4 w-4" /> Savdo tarixi
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold">{partner.name}</h1>
-          <p className="text-sm text-muted-foreground">{partnerTypeLabels[partner.type]}</p>
+          <div className="mt-1 flex items-center gap-1.5">
+            <h1 className="text-2xl font-semibold">{partner.name}</h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              title="Hamkor ma'lumotlarini tahrirlash"
+              onClick={() => setEditOpen(true)}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {partnerTypeLabels[partner.type]}
+            {partner.phone && ` · ${partner.phone}`}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Bank hisob raqami:{" "}
+            {partner.bankAccount ? (
+              <span className="font-medium text-foreground">{partner.bankAccount}</span>
+            ) : (
+              <button
+                type="button"
+                className="text-primary hover:underline"
+                onClick={() => setEditOpen(true)}
+              >
+                kiritilmagan, qo&apos;shish uchun bosing
+              </button>
+            )}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <BalanceBadge value={partner.balanceUzs} />
           <Button size="sm" variant="outline" onClick={() => setPaymentOpen(true)}>
             <Wallet className="h-4 w-4" />
             To'lov qo'shish
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setTransferOpen(true)}>
+            <Banknote className="h-4 w-4" />
+            Pul o&apos;tkazish
           </Button>
           <a
             href={apiUrl(`/excel/partners/${partner.id}/statement`)}
@@ -120,7 +156,7 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
                     className={row.cancelled ? "opacity-50" : undefined}
                   >
                     <TableCell className="text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell>{formatDate(row.date)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(row.date)}</TableCell>
                     {row.kind === "delivery" || row.kind === "purchase-delivery" ? (
                       <>
                         <TableCell className="font-medium">
@@ -188,7 +224,7 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
                           : "To'lov"}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      #{i + 1} · {formatDate(row.date)}
+                      #{i + 1} · {formatDateTime(row.date)}
                     </span>
                   </div>
                   {row.kind === "delivery" || row.kind === "purchase-delivery" ? (
@@ -236,6 +272,14 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
       )}
 
       <PaymentFormDialog partnerId={partner.id} open={paymentOpen} onOpenChange={setPaymentOpen} />
+      <CashTransactionFormDialog
+        direction="out"
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
+        initialPartnerId={partner.id}
+        title={`"${partner.name}"ga pul o'tkazish`}
+      />
+      <PartnerFormDialog partner={partner} open={editOpen} onOpenChange={setEditOpen} />
     </div>
   );
 }

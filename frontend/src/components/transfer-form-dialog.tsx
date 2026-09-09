@@ -105,6 +105,7 @@ export function TransferFormDialog({
       toast.success("Transfer amalga oshirildi");
       queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       onOpenChange(false);
     },

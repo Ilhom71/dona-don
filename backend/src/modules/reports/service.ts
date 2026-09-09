@@ -13,6 +13,9 @@ export async function getDashboardSummary() {
   const [stockValue] = await db
     .select({
       value: sql<string>`coalesce(sum(${productStock.quantity} * ${productStock.avgCostUzs}), 0)`,
+      // Ombordagi yuk og'irligi, hammasi kg'ga o'girilgan (ton = 1000 kg) -
+      // Kassa bosh sahifasidagi "Ombordagi yuk" kartasi uchun.
+      weightKg: sql<string>`coalesce(sum(case when ${products.unit} = 'ton' then ${productStock.quantity} * 1000 else ${productStock.quantity} end), 0)`,
     })
     .from(productStock)
     .innerJoin(products, eq(productStock.productId, products.id))
@@ -92,6 +95,7 @@ export async function getDashboardSummary() {
   // shuning uchun jadval bo'sh bo'lsa ham har doim aynan bitta qator qaytaradi.
   return {
     stockValueUzs: Number(stockValue?.value ?? 0),
+    stockWeightKg: Number(stockValue?.weightKg ?? 0),
     todaySalesUzs: Number(today?.total ?? 0),
     todaySalesCount: Number(today?.count ?? 0),
     monthSalesUzs: Number(month?.total ?? 0),

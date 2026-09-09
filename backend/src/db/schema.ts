@@ -129,6 +129,8 @@ export const partners = pgTable("partners", {
   name: varchar("name", { length: 128 }).notNull(),
   phone: varchar("phone", { length: 32 }),
   address: text("address"),
+  // Hamkorga pul o'tkazish uchun bank hisob raqami (ixtiyoriy).
+  bankAccount: varchar("bank_account", { length: 64 }),
   type: partnerTypeEnum("type").notNull().default("customer"),
   notes: text("notes"),
   archivedAt: timestamp("archived_at"),
@@ -327,6 +329,90 @@ export const stockMovements = pgTable(
   ]
 );
 
+// ---------- Stock lots (FIFO tannarx uchun partiyalar) ----------
+// Har bir kirim (xarid/qo'lda/transfer) alohida partiya sifatida saqlanadi,
+// o'z narxi (unitCostUzs) bilan - bu narx hech qachon o'zgarmaydi. Sotilganda/
+// chiqimda eng eski (receivedAt) faol partiyadan navbat bilan yechiladi
+// (stock_lot_consumptions orqali), shunda yangi narxda kirim qilingan
+// mahsulot eski partiyaning tannarxiga ta'sir qilmaydi.
+export const stockLots = pgTable(
+  "stock_lots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "restrict" }),
+    warehouseId: uuid("warehouse_id")
+      .notNull()
+      .references(() => warehouses.id, { onDelete: "restrict" }),
+    unitCostUzs: numeric("unit_cost_uzs", { precision: 14, scale: 2 }).notNull(),
+    quantity: numeric("quantity", { precision: 14, scale: 3 }).notNull(),
+    remainingQuantity: numeric("remaining_quantity", { precision: 14, scale: 3 }).notNull(),
+    source: movementSourceEnum("source").notNull(),
+    purchaseId: uuid("purchase_id").references(() => purchases.id, { onDelete: "set null" }),
+    movementId: uuid("movement_id").references(() => stockMovements.id, { onDelete: "set null" }),
+    receivedAt: timestamp("received_at").notNull(),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("stock_lots_product_warehouse_idx").on(t.productId, t.warehouseId, t.receivedAt),
+  ]
+);
+
+// ---------- Stock lot consumptions (qaysi partiyadan qancha yechilgani) ----------
+// Har bir savdo qatori yoki qo'lda chiqim/transfer qaysi partiya(lar)dan qancha
+// miqdorni FIFO tartibida "yegani"ni qayd etadi - bekor qilish/tiklashda aynan
+// o'sha partiya(lar)ga qaytarish/qayta yechish uchun kerak.
+export const stockLotConsumptions = pgTable(
+  "stock_lot_consumptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    lotId: uuid("lot_id")
+      .notNull()
+      .references(() => stockLots.id, { onDelete: "restrict" }),
+    quantity: numeric("quantity", { precision: 14, scale: 3 }).notNull(),
+    unitCostUzs: numeric("unit_cost_uzs", { precision: 14, scale: 2 }).notNull(),
+    saleItemId: uuid("sale_item_id").references(() => saleItems.id, { onDelete: "set null" }),
+    movementId: uuid("movement_id").references(() => stockMovements.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("stock_lot_consumptions_lot_idx").on(t.lotId)]
+);
+
+// ---------- Day openings (kun ochish) ----------
+// Foydalanuvchi kun boshida tugma bosadi - shundan keyingina savdo qilish
+// mumkin (createSale shu jadvaldan tekshiradi). Bir sanaga bir qator - qayta
+// bosilsa (masalan yopilgandan keyin qayta ochilsa) `openedAt` yangilanadi
+// (upsert) - shu orqali "ochiqmi" holati dayClosings bilan solishtirib
+// aniqlanadi (pastga, day-closings/service.ts'ga qara).
+export const dayOpenings = pgTable("day_openings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  openingDate: varchar("opening_date", { length: 10 }).notNull().unique(), // "YYYY-MM-DD"
+  openedAt: timestamp("opened_at").defaultNow().notNull(),
+  note: text("note"),
+});
+
+// ---------- Day closings (kun yopish) ----------
+// Foydalanuvchi kun oxirida tugma bosadi: 1) shu paytdagi kassa qoldig'i
+// buxgalteriyaga o'tkaziladi (haqiqiy pul harakati - xuddi qo'lda "Kassadan
+// o'tkazish" kabi), 2) shu kungi kassa qoldig'i/savdo/kirim-chiqim "suratga
+// olinadi" va saqlanadi, 3) kun "yopiq" holatga o'tadi - yangi savdo yaratib
+// bo'lmaydi, kun qayta ochilmaguncha (dayOpenings, yuqoriga qara). Bir kunga
+// bir qator - qayta bosilsa yangilanadi (upsert).
+export const dayClosings = pgTable("day_closings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  closingDate: varchar("closing_date", { length: 10 }).notNull().unique(), // "YYYY-MM-DD"
+  kassaBalanceUzs: numeric("kassa_balance_uzs", { precision: 16, scale: 2 }).notNull(),
+  warehouseStockValueUzs: numeric("warehouse_stock_value_uzs", { precision: 16, scale: 2 }).notNull(),
+  todaySalesUzs: numeric("today_sales_uzs", { precision: 16, scale: 2 }).notNull(),
+  periodInUzs: numeric("period_in_uzs", { precision: 16, scale: 2 }).notNull(),
+  periodOutUzs: numeric("period_out_uzs", { precision: 16, scale: 2 }).notNull(),
+  note: text("note"),
+  closedAt: timestamp("closed_at").defaultNow().notNull(),
+});
+
 // ---------- Payments (to'lovlar - nasiya/qarz to'lash) ----------
 export const payments = pgTable(
   "payments",
@@ -411,6 +497,13 @@ export const cashTransactions = pgTable(
     // qarz olindi/berildi kabi holatlar uchun.
     partnerId: uuid("partner_id").references(() => partners.id, { onDelete: "set null" }),
     amountUzs: numeric("amount_uzs", { precision: 16, scale: 2 }).notNull(),
+    // Qanday usulda: naqd / karta / bank o'tkazmasi - ayniqsa hamkorga pul
+    // o'tkazilganda ("Pul o'tkazish") aniq ko'rinishi uchun.
+    method: paymentMethodEnum("method").notNull().default("cash"),
+    // method="bank" bo'lganda - aynan qaysi bank hisob raqamiga/dan
+    // o'tkazilgani (odatda hamkorning saqlangan raqami, lekin qo'lda ham
+    // kiritish mumkin - masalan boshqa hisobga to'langan bo'lsa).
+    bankAccount: varchar("bank_account", { length: 64 }),
     note: text("note").notNull(),
     // Yozuv bekor qilinsa, o'chirilmaydi - shu ikki maydon to'ldiriladi
     // (immutable ledger). Arxiv sahifasidan "Tiklash" bilan qaytariladi.
@@ -450,6 +543,21 @@ export const productsRelations = relations(products, ({ many }) => ({
   purchaseItems: many(purchaseItems),
   stockMovements: many(stockMovements),
   stock: many(productStock),
+  lots: many(stockLots),
+}));
+
+export const stockLotsRelations = relations(stockLots, ({ one, many }) => ({
+  product: one(products, { fields: [stockLots.productId], references: [products.id] }),
+  warehouse: one(warehouses, { fields: [stockLots.warehouseId], references: [warehouses.id] }),
+  purchase: one(purchases, { fields: [stockLots.purchaseId], references: [purchases.id] }),
+  movement: one(stockMovements, { fields: [stockLots.movementId], references: [stockMovements.id] }),
+  consumptions: many(stockLotConsumptions),
+}));
+
+export const stockLotConsumptionsRelations = relations(stockLotConsumptions, ({ one }) => ({
+  lot: one(stockLots, { fields: [stockLotConsumptions.lotId], references: [stockLots.id] }),
+  saleItem: one(saleItems, { fields: [stockLotConsumptions.saleItemId], references: [saleItems.id] }),
+  movement: one(stockMovements, { fields: [stockLotConsumptions.movementId], references: [stockMovements.id] }),
 }));
 
 export const warehousesRelations = relations(warehouses, ({ many }) => ({
@@ -483,12 +591,13 @@ export const salesRelations = relations(sales, ({ one, many }) => ({
   payments: many(payments),
 }));
 
-export const saleItemsRelations = relations(saleItems, ({ one }) => ({
+export const saleItemsRelations = relations(saleItems, ({ one, many }) => ({
   sale: one(sales, { fields: [saleItems.saleId], references: [sales.id] }),
   product: one(products, {
     fields: [saleItems.productId],
     references: [products.id],
   }),
+  lotConsumptions: many(stockLotConsumptions),
 }));
 
 export const purchasesRelations = relations(purchases, ({ one, many }) => ({
@@ -501,6 +610,7 @@ export const purchasesRelations = relations(purchases, ({ one, many }) => ({
     references: [warehouses.id],
   }),
   items: many(purchaseItems),
+  lots: many(stockLots),
 }));
 
 export const purchaseItemsRelations = relations(purchaseItems, ({ one }) => ({
@@ -514,7 +624,7 @@ export const purchaseItemsRelations = relations(purchaseItems, ({ one }) => ({
   }),
 }));
 
-export const stockMovementsRelations = relations(stockMovements, ({ one }) => ({
+export const stockMovementsRelations = relations(stockMovements, ({ one, many }) => ({
   product: one(products, {
     fields: [stockMovements.productId],
     references: [products.id],
@@ -532,6 +642,8 @@ export const stockMovementsRelations = relations(stockMovements, ({ one }) => ({
     fields: [stockMovements.warehouseId],
     references: [warehouses.id],
   }),
+  lots: many(stockLots),
+  lotConsumptions: many(stockLotConsumptions),
 }));
 
 export const paymentsRelations = relations(payments, ({ one }) => ({

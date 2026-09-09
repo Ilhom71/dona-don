@@ -5,6 +5,7 @@ import {
   createTransfer,
   listMovements,
   listProductStock,
+  listActiveLots,
   cancelMovement,
   restoreMovement,
 } from "./service";
@@ -94,6 +95,17 @@ stockRoutes.get("/levels", async (c) => {
     warehouseId: warehouseId || undefined,
   });
   return c.json(levels);
+});
+
+// Har xil narxda kirim qilingan partiyalarni alohida ko'rsatish uchun
+// (Omborlar sahifasi, Yangi savdo formasidagi "partiya" tanlovi).
+stockRoutes.get("/lots", async (c) => {
+  const { productId, warehouseId } = c.req.query();
+  const lots = await listActiveLots({
+    productId: productId || undefined,
+    warehouseId: warehouseId || undefined,
+  });
+  return c.json(lots);
 });
 
 stockRoutes.post("/transfers", async (c) => {

@@ -7,6 +7,10 @@ import {
   Users,
   Warehouse,
   Wallet,
+  Receipt,
+  CircleDollarSign,
+  HandCoins,
+  Landmark,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,10 +25,22 @@ export type NavGroup = {
   items: NavItem[];
 };
 
+// Sidebarda aynan 4 ta bo'lim (Kassa/Ombor/Savdo/Arxiv) - foydalanuvchi
+// so'roviga ko'ra. Kassa/Ombor/Savdo ko'p sahifali - ular ichidagi
+// bo'limlar (masalan Kassa ostida: Amaliyotlari, Savdolar, Hamkorlar,
+// Buxgalteriya) sidebarda o'sha guruh ichiga joylashtirilib (yoyilib/
+// yig'ilib turadigan) ko'rsatiladi. Arxiv - bitta sahifali, shuning uchun
+// oddiy alohida havola sifatida ko'rinadi.
 export const navGroups: NavGroup[] = [
   {
-    title: "",
-    items: [{ label: "Kassa", href: "/", icon: Wallet }],
+    title: "Kassa",
+    items: [
+      { label: "Kassa", href: "/", icon: Wallet },
+      { label: "Amaliyotlari", href: "/kassa/amaliyotlari", icon: Receipt },
+      { label: "Savdolar", href: "/kassa/savdolar", icon: CircleDollarSign },
+      { label: "Hamkorlar", href: "/kassa/hamkorlar", icon: HandCoins },
+      { label: "Buxgalteriya", href: "/kassa/buxgalteriya", icon: Landmark },
+    ],
   },
   {
     title: "Ombor",
@@ -43,10 +59,14 @@ export const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "",
+    title: "Arxiv",
     items: [{ label: "Arxiv", href: "/arxiv", icon: Archive }],
   },
 ];
+
+// Barcha bo'limlarning tekis ro'yxati - joriy sahifa sarlavhasini topish
+// (mobil header) kabi holatlar uchun.
+export const navItems: NavItem[] = navGroups.flatMap((g) => g.items);
 
 export const mobileQuickNav: NavItem[] = [
   { label: "Kassa", href: "/", icon: Wallet },

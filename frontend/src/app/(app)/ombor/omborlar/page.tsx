@@ -23,14 +23,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -43,8 +35,8 @@ import {
 import { WarehouseFormDialog } from "@/components/warehouse-form-dialog";
 import { StockAdjustmentDialog } from "@/components/stock-adjustment-dialog";
 import { api, ApiError } from "@/lib/api";
-import type { ProductStock, Warehouse } from "@/lib/types";
-import { formatMoney, formatQuantity } from "@/lib/format";
+import type { ProductStock, StockLot, Warehouse } from "@/lib/types";
+import { formatDate, formatMoney, formatQuantity, movementSourceLabels } from "@/lib/format";
 
 /** Turli o'lchov birligidagi (kg/ton) qoldiqlarni bitta kg qiymatiga normallashtiradi. */
 function toKg(qty: number, unit: "kg" | "ton") {
@@ -60,6 +52,12 @@ export default function WarehousesPage() {
   const { data: stockLevels } = useQuery({
     queryKey: ["stock-levels"],
     queryFn: () => api.get<ProductStock[]>("/stock/levels"),
+  });
+  // Har xil narxda kirim qilingan (masalan har xil hamkordan olingan)
+  // bug'doyning har biri alohida partiya sifatida - shu yerdan olinadi.
+  const { data: lots } = useQuery({
+    queryKey: ["stock-lots"],
+    queryFn: () => api.get<StockLot[]>("/stock/lots"),
   });
 
   const [formOpen, setFormOpen] = useState(false);
@@ -77,6 +75,7 @@ export default function WarehousesPage() {
       // Shu ombordagi qoldiq endi "faol" hisoblanmaydi - qoldiq ko'rinishlari
       // va bosh sahifa ham yangilanishi kerak.
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -85,6 +84,10 @@ export default function WarehousesPage() {
 
   function stockFor(warehouseId: string) {
     return (stockLevels ?? []).filter((s) => s.warehouseId === warehouseId && Number(s.quantity) > 0);
+  }
+
+  function lotsFor(warehouseId: string, productId: string) {
+    return (lots ?? []).filter((l) => l.warehouseId === warehouseId && l.productId === productId);
   }
 
   function summaryFor(warehouseId: string) {
@@ -255,42 +258,63 @@ export default function WarehousesPage() {
                   <p className="text-muted-foreground">Bu omborda hozircha mahsulot yo&apos;q</p>
                 </div>
               ) : (
-                <div className="max-h-[50vh] overflow-y-auto rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Mahsulot</TableHead>
-                        <TableHead>Qoldiq</TableHead>
-                        <TableHead>Tan narx</TableHead>
-                        <TableHead className="text-right">Jami qiymat</TableHead>
-                        <TableHead className="w-10"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {stockFor(viewing.id).map((s) => (
-                        <TableRow key={s.id}>
-                          <TableCell className="font-medium">{s.product?.name ?? "-"}</TableCell>
-                          <TableCell>
-                            {formatQuantity(s.quantity, s.product?.unit ?? "kg")}
-                          </TableCell>
-                          <TableCell>{formatMoney(s.avgCostUzs)}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatMoney(Number(s.quantity) * Number(s.avgCostUzs))}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Miqdorni to'g'irlash (inventarizatsiya)"
-                              onClick={() => setAdjusting(s)}
-                            >
-                              <Scale className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+                  {stockFor(viewing.id).map((s) => {
+                    const productLots = lotsFor(viewing.id, s.productId);
+                    return (
+                      <div key={s.id} className="rounded-md border">
+                        <div className="flex items-center justify-between gap-2 border-b bg-muted/30 p-2.5">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{s.product?.name ?? "-"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Jami: {formatQuantity(s.quantity, s.product?.unit ?? "kg")} -{" "}
+                              {formatMoney(Number(s.quantity) * Number(s.avgCostUzs))}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Miqdorni to'g'irlash (inventarizatsiya)"
+                            onClick={() => setAdjusting(s)}
+                          >
+                            <Scale className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {/* Har xil narxda kirim qilingan (masalan har xil hamkordan
+                            olingan) partiyalar bu yerda alohida-alohida ko'rinadi -
+                            biri "2,000/kg" bo'lsa boshqasi "3,000/kg" aralashib
+                            ketmaydi. */}
+                        <div className="divide-y">
+                          {productLots.length === 0 ? (
+                            <p className="p-2.5 text-xs text-muted-foreground">
+                              Partiya ma&apos;lumoti yo&apos;q
+                            </p>
+                          ) : (
+                            productLots.map((lot) => (
+                              <div
+                                key={lot.id}
+                                className="flex items-center justify-between gap-2 p-2.5 text-sm"
+                              >
+                                <div className="min-w-0">
+                                  <p>
+                                    {formatQuantity(lot.remainingQuantity, s.product?.unit ?? "kg")} -{" "}
+                                    <span className="font-medium">{formatMoney(lot.unitCostUzs)}</span>
+                                    /birlik
+                                  </p>
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {lot.supplierName ?? movementSourceLabels[lot.source] ?? lot.source}
+                                  </p>
+                                </div>
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {formatDate(lot.receivedAt)}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

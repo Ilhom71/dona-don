@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { db } from "../../db";
 import {
   getCashLedger,
   getCashSummary,
@@ -18,11 +19,18 @@ const cashTransactionSchema = z.object({
   amountUzs: z.number().positive("Summa musbat bo'lishi kerak"),
   note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
   partnerId: z.string().uuid().nullable().optional(),
+  method: z.enum(["cash", "card", "bank"]).optional(),
+  bankAccount: z.string().nullable().optional(),
 });
 
 const accountingTransferSchema = z.object({
   amountUzs: z.number().positive("Summa musbat bo'lishi kerak"),
   note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
+});
+
+const accountingWithdrawSchema = accountingTransferSchema.extend({
+  method: z.enum(["cash", "card", "bank"]).optional(),
+  bankAccount: z.string().nullable().optional(),
 });
 
 const cancelSchema = z.object({ reason: z.string().nullable().optional() });
@@ -107,13 +115,13 @@ cashRoutes.post("/accounting/transfer-in", async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
   }
-  const row = await transferToAccounting(parsed.data);
+  const row = await db.transaction((tx) => transferToAccounting(tx, parsed.data));
   return c.json(row, 201);
 });
 
 cashRoutes.post("/accounting/withdraw", async (c) => {
   const body = await c.req.json().catch(() => null);
-  const parsed = accountingTransferSchema.safeParse(body);
+  const parsed = accountingWithdrawSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
   }

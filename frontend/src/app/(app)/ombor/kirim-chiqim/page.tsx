@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Ban } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Ban, Pencil } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -74,6 +74,7 @@ export default function StockMovementsPage() {
       queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["partners"] });
       queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -257,16 +258,27 @@ export default function StockMovementsPage() {
                       {m.note ?? "-"}
                     </TableCell>
                     <TableCell>
-                      {cancelPathFor(m) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Bekor qilish"
-                          onClick={() => setCancelTarget(m)}
-                        >
-                          <Ban className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
+                      <div className="flex justify-end gap-1">
+                        {m.source === "purchase" && m.purchaseId && (
+                          <Link
+                            href={`/ombor/kirim?editId=${m.purchaseId}`}
+                            title="Tahrirlash"
+                            className={buttonVariants({ variant: "ghost", size: "icon" })}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Link>
+                        )}
+                        {cancelPathFor(m) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Bekor qilish"
+                            onClick={() => setCancelTarget(m)}
+                          >
+                            <Ban className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -296,11 +308,21 @@ export default function StockMovementsPage() {
                         .join(" · ")}
                     </span>
                   </div>
-                  {cancelPathFor(m) && (
-                    <div className="flex justify-end border-t pt-1">
-                      <Button variant="ghost" size="icon" onClick={() => setCancelTarget(m)}>
-                        <Ban className="h-4 w-4 text-destructive" />
-                      </Button>
+                  {(cancelPathFor(m) || (m.source === "purchase" && m.purchaseId)) && (
+                    <div className="flex justify-end gap-1 border-t pt-1">
+                      {m.source === "purchase" && m.purchaseId && (
+                        <Link
+                          href={`/ombor/kirim?editId=${m.purchaseId}`}
+                          className={buttonVariants({ variant: "ghost", size: "icon" })}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Link>
+                      )}
+                      {cancelPathFor(m) && (
+                        <Button variant="ghost" size="icon" onClick={() => setCancelTarget(m)}>
+                          <Ban className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   )}
                 </CardContent>

@@ -31,6 +31,7 @@ const schema = z.object({
   name: z.string().min(1, "Nomi kiritilishi shart"),
   phone: z.string().optional(),
   address: z.string().optional(),
+  bankAccount: z.string().optional(),
   type: z.enum(["customer", "supplier", "both"]),
   notes: z.string().optional(),
 });
@@ -53,7 +54,7 @@ export function PartnerFormDialog({
   const queryClient = useQueryClient();
   const { register, handleSubmit, control, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", phone: "", address: "", type: "customer", notes: "" },
+    defaultValues: { name: "", phone: "", address: "", bankAccount: "", type: "customer", notes: "" },
   });
 
   useEffect(() => {
@@ -62,6 +63,7 @@ export function PartnerFormDialog({
         name: partner?.name ?? "",
         phone: partner?.phone ?? "",
         address: partner?.address ?? "",
+        bankAccount: partner?.bankAccount ?? "",
         type: partner?.type ?? "customer",
         notes: partner?.notes ?? "",
       });
@@ -74,6 +76,7 @@ export function PartnerFormDialog({
         name: values.name,
         phone: values.phone || null,
         address: values.address || null,
+        bankAccount: values.bankAccount || null,
         type: values.type,
         notes: values.notes || null,
       };
@@ -84,6 +87,10 @@ export function PartnerFormDialog({
     onSuccess: (saved) => {
       toast.success(partner ? "Hamkor yangilandi" : "Hamkor qo'shildi");
       queryClient.invalidateQueries({ queryKey: ["partners"] });
+      // Hamkor hisob-varag'i sahifasi ["partner", id] kaliti bilan alohida
+      // so'rov qiladi - shuni ham yangilaymiz (masalan bank hisob raqami
+      // o'sha sahifadan tahrirlangan bo'lsa, darhol ko'rinishi uchun).
+      queryClient.invalidateQueries({ queryKey: ["partner"] });
       if (!partner) onCreated?.(saved);
       onOpenChange(false);
     },
@@ -136,6 +143,10 @@ export function PartnerFormDialog({
           <div className="space-y-2">
             <Label htmlFor="address">Manzil</Label>
             <Input id="address" {...register("address")} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="bankAccount">Bank hisob raqami</Label>
+            <Input id="bankAccount" {...register("bankAccount")} placeholder="2020 8000 xxxx xxxx" />
           </div>
           <div className="space-y-2">
             <Label htmlFor="notes">Izoh</Label>

@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -228,7 +229,13 @@ export function MovementFormDialog({
               <Label htmlFor="pricePerUnit">
                 Narxi (birlik uchun) {type === "out" && "- ixtiyoriy"}
               </Label>
-              <Input id="pricePerUnit" type="number" step="any" {...register("pricePerUnit")} />
+              <Controller
+                control={control}
+                name="pricePerUnit"
+                render={({ field }) => (
+                  <MoneyInput id="pricePerUnit" value={field.value} onChange={field.onChange} />
+                )}
+              />
             </div>
             <div className="space-y-2">
               <Label>Valyuta</Label>

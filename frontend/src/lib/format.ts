@@ -46,7 +46,13 @@ export function formatDateTime(value: string | Date) {
 
 export function toDateInputValue(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
-  return date.toISOString().slice(0, 10);
+  // Mahalliy (brauzer) sana qismlari ishlatiladi - `toISOString()` har doim
+  // UTC'ga o'giradi, shuning uchun Toshkentda kechasi (00:00-04:59) ochilgan
+  // forma sana maydonini bir kun oldingi kunga o'rnatib qo'yardi.
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export const unitLabels: Record<Unit, string> = {
@@ -63,6 +69,12 @@ export const partnerTypeLabels: Record<string, string> = {
 export const movementTypeLabels: Record<string, string> = {
   in: "Kirim",
   out: "Chiqim",
+};
+
+export const movementSourceLabels: Record<string, string> = {
+  purchase: "Xarid",
+  manual: "Qo'lda kiritilgan",
+  transfer: "Omborlar orasida ko'chirilgan",
 };
 
 export const paymentStatusLabels: Record<string, string> = {

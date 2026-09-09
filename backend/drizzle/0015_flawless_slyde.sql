@@ -1,0 +1,1 @@
+ALTER TABLE "partners" ADD COLUMN "bank_account" varchar(64);

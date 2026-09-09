@@ -4,10 +4,10 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Ban, Truck, Wallet } from "lucide-react";
+import { ArrowLeft, Ban, Pencil, Truck, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
@@ -67,6 +67,7 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
       queryClient.invalidateQueries({ queryKey: ["partners"] });
       queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -98,15 +99,24 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
             {paymentStatusLabels[sale.paymentStatus]}
           </Badge>
           {!sale.cancelledAt && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setCancelOpen(true)}
-            >
-              <Ban className="h-4 w-4" />
-              Bekor qilish
-            </Button>
+            <>
+              <Link
+                href={`/savdo/yangi?editId=${sale.id}`}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                <Pencil className="h-4 w-4" />
+                Tahrirlash
+              </Link>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setCancelOpen(true)}
+              >
+                <Ban className="h-4 w-4" />
+                Bekor qilish
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -166,7 +176,7 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
         <CardHeader>
           <CardTitle className="text-base">Mahsulotlar</CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
+        <CardContent className="hidden overflow-x-auto p-0 md:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -195,6 +205,25 @@ export default function SaleDetailPage(props: PageProps<"/savdo/tarix/[id]">) {
               ))}
             </TableBody>
           </Table>
+        </CardContent>
+        <CardContent className="space-y-2 md:hidden">
+          {sale.items?.map((item) => (
+            <div key={item.id} className="space-y-1 rounded-md border p-2.5 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{item.product?.name ?? "-"}</span>
+                <span>{formatMoney(item.subtotal, sale.currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>
+                  {formatQuantity(item.quantity, item.product?.unit ?? "kg")} x{" "}
+                  {formatMoney(item.unitPrice, sale.currency)}
+                </span>
+                {Number(item.freightCostUzs) > 0 && (
+                  <span>Yuk: {formatMoney(item.freightCostUzs)}</span>
+                )}
+              </div>
+            </div>
+          ))}
         </CardContent>
       </Card>
 

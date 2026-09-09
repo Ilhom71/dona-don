@@ -11,7 +11,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (status !== "authenticated") {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/wheat-sack.png" alt="Dona Don" width={64} height={64} />
+        <p className="text-lg font-semibold">Dona Don</p>
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
