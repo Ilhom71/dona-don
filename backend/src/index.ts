@@ -16,6 +16,7 @@ import { excelRoutes } from "./modules/excel/routes";
 import { cashRoutes } from "./modules/cash/routes";
 import { expenseRoutes } from "./modules/expenses/routes";
 import { dayClosingRoutes } from "./modules/day-closings/routes";
+import { archiveRoutes } from "./modules/archive/routes";
 
 const app = new Hono();
 
@@ -47,6 +48,7 @@ app.route("/excel", excelRoutes);
 app.route("/cash", cashRoutes);
 app.route("/expenses", expenseRoutes);
 app.route("/day-closings", dayClosingRoutes);
+app.route("/archive", archiveRoutes);
 
 app.onError((err, c) => {
   console.error(err);

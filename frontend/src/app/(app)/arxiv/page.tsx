@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -8,6 +9,7 @@ import {
   Ban,
   Package,
   RotateCcw,
+  Trash2,
   ShoppingCart,
   Truck,
   Users,
@@ -18,6 +20,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableSearch } from "@/components/table-controls";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Table,
   TableBody,
@@ -63,19 +76,19 @@ function restorePathFor(row: CashLedgerRow) {
 export default function ArchivePage() {
   const queryClient = useQueryClient();
 
-  const { data: products, isLoading: productsLoading } = useQuery({
+  const { data: productsAll, isLoading: productsLoading } = useQuery({
     queryKey: ["archived-products"],
     queryFn: () => api.get<Product[]>("/products/archived"),
   });
-  const { data: partners, isLoading: partnersLoading } = useQuery({
+  const { data: partnersAll, isLoading: partnersLoading } = useQuery({
     queryKey: ["archived-partners"],
     queryFn: () => api.get<Partner[]>("/partners/archived"),
   });
-  const { data: warehouses, isLoading: warehousesLoading } = useQuery({
+  const { data: warehousesAll, isLoading: warehousesLoading } = useQuery({
     queryKey: ["archived-warehouses"],
     queryFn: () => api.get<Warehouse[]>("/warehouses/archived"),
   });
-  const { data: cancelledSales, isLoading: cancelledSalesLoading } = useQuery({
+  const { data: cancelledSalesAll, isLoading: cancelledSalesLoading } = useQuery({
     queryKey: ["cancelled-sales"],
     queryFn: () => api.get<Sale[]>("/sales?paymentStatus=cancelled"),
   });
@@ -83,13 +96,8 @@ export default function ArchivePage() {
     queryKey: ["cash-ledger-full"],
     queryFn: () => api.get<CashLedgerRow[]>("/cash/ledger"),
   });
-  const cancelledCashOps = (fullLedger ?? []).filter((r) => r.cancelled);
-  const { data: fullAccountingLedger, isLoading: accountingLedgerLoading } = useQuery({
-    queryKey: ["accounting-ledger-full"],
-    queryFn: () => api.get<CashLedgerRow[]>("/cash/accounting/ledger"),
-  });
-  const cancelledAccountingOps = (fullAccountingLedger ?? []).filter((r) => r.cancelled);
-  const { data: cancelledPurchases, isLoading: cancelledPurchasesLoading } = useQuery({
+  const cancelledCashOpsAll = (fullLedger ?? []).filter((r) => r.cancelled);
+  const { data: cancelledPurchasesAll, isLoading: cancelledPurchasesLoading } = useQuery({
     queryKey: ["cancelled-purchases"],
     queryFn: () => api.get<Purchase[]>("/purchases?paymentStatus=cancelled"),
   });
@@ -104,8 +112,23 @@ export default function ArchivePage() {
   const productUnit = (id: string) => allProducts?.find((p) => p.id === id)?.unit ?? "kg";
   // Faqat "manual" (qo'lda kiritilgan) yozuvlar tiklanadi - "purchase" manbali
   // yozuvlar bog'liq xarid orqali (u yerda faqat ko'rish, tiklanmaydi) hisobga olinadi.
-  const cancelledMovements = (allMovements ?? []).filter(
+  const cancelledMovementsAll = (allMovements ?? []).filter(
     (m) => m.cancelled && m.source === "manual"
+  );
+
+  // Umumiy qidiruv - barcha bo'limlardagi ro'yxatlarni bir vaqtda filtrlaydi.
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const match = (...parts: (string | null | undefined)[]) =>
+    !q || parts.some((p) => (p ?? "").toLowerCase().includes(q));
+  const products = productsAll?.filter((p) => match(p.name, p.notes));
+  const partners = partnersAll?.filter((p) => match(p.name, p.phone, p.address));
+  const warehouses = warehousesAll?.filter((w) => match(w.name, w.address));
+  const cancelledSales = cancelledSalesAll?.filter((x) => match(x.partner?.name, x.vehicleNumber));
+  const cancelledPurchases = cancelledPurchasesAll?.filter((x) => match(x.partner?.name, x.vehicleNumber));
+  const cancelledCashOps = cancelledCashOpsAll.filter((r) => match(r.description, r.partnerName));
+  const cancelledMovements = cancelledMovementsAll.filter((m) =>
+    match(allProducts?.find((p) => p.id === m.productId)?.name, m.note, m.vehicleNumber)
   );
 
   function useRestore(path: string, invalidateKeys: string[]) {
@@ -135,35 +158,10 @@ export default function ArchivePage() {
       queryClient.invalidateQueries({ queryKey: ["cash-ledger-full"] });
       queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["cash-summary"] });
-      // Tiklangan yozuv kassa->buxgalteriya o'tkazmaning bir tomoni bo'lishi
-      // mumkin - bunda ikkinchi tomon (buxgalteriya) ham serverda avtomatik
-      // tiklanadi, shuning uchun u yerni ham yangilaymiz.
-      queryClient.invalidateQueries({ queryKey: ["accounting-ledger-full"] });
-      queryClient.invalidateQueries({ queryKey: ["accounting-ledger"] });
-      queryClient.invalidateQueries({ queryKey: ["accounting-summary"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["accounting-report"] });
       queryClient.invalidateQueries({ queryKey: ["partners"] });
       queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
-  });
-
-  // Buxgalteriya (joriy hisob) yozuvlari ham xuddi shu jadval/endpointdan
-  // tiklanadi (`cash_transactions`) - kassaniki bilan bir xil, faqat manba
-  // "/cash/accounting/ledger".
-  const restoreAccountingOpMutation = useMutation({
-    mutationFn: (row: CashLedgerRow) => api.post(`/cash/transactions/${row.id}/restore`, {}),
-    onSuccess: () => {
-      toast.success("Tiklandi");
-      queryClient.invalidateQueries({ queryKey: ["accounting-ledger-full"] });
-      queryClient.invalidateQueries({ queryKey: ["accounting-ledger"] });
-      queryClient.invalidateQueries({ queryKey: ["accounting-summary"] });
-      // Tiklangan yozuv kassa tomonini ham qamrab olishi mumkin (yuqoridagi
-      // izohga qarang) - shuning uchun kassa so'rovlarini ham yangilaymiz.
-      queryClient.invalidateQueries({ queryKey: ["cash-ledger-full"] });
-      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
-      queryClient.invalidateQueries({ queryKey: ["cash-summary"] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
   });
@@ -182,6 +180,31 @@ export default function ArchivePage() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
   });
 
+  // Arxivni tozalash: "all" - hozir hammasini, "older_than_30_days" - faqat 30 kundan
+  // oldin arxivlangan/bekor qilinganlarni butunlay o'chiradi (qaytarib bo'lmaydi).
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeScope, setPurgeScope] = useState<"all" | "older_than_30_days">("older_than_30_days");
+  const purgeMutation = useMutation({
+    mutationFn: (scope: "all" | "older_than_30_days") =>
+      api.post<{ deleted: Record<string, number>; skipped: Record<string, number> }>(
+        "/archive/purge",
+        { scope }
+      ),
+    onSuccess: (res) => {
+      const deletedTotal = Object.values(res.deleted).reduce((a, b) => a + b, 0);
+      const skippedTotal = Object.values(res.skipped).reduce((a, b) => a + b, 0);
+      toast.success(
+        skippedTotal > 0
+          ? `${deletedTotal} ta yozuv o'chirildi. ${skippedTotal} ta mahsulot/hamkor/ombor tarixiy yozuvlari bog'liq bo'lgani uchun arxivda qoldi`
+          : `Arxiv tozalandi: ${deletedTotal} ta yozuv o'chirildi`
+      );
+      // Ko'p jadvallarga ta'sir qiladi - barcha so'rovlarni yangilaymiz.
+      queryClient.invalidateQueries();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
+    onSettled: () => setPurgeOpen(false),
+  });
+
   const isEmpty =
     !productsLoading &&
     !partnersLoading &&
@@ -190,22 +213,39 @@ export default function ArchivePage() {
     !cancelledPurchasesLoading &&
     !ledgerLoading &&
     !movementsLoading &&
-    !products?.length &&
-    !partners?.length &&
-    !warehouses?.length &&
-    !cancelledSales?.length &&
-    !cancelledPurchases?.length &&
-    !cancelledCashOps.length &&
-    !cancelledMovements.length;
+    !productsAll?.length &&
+    !partnersAll?.length &&
+    !warehousesAll?.length &&
+    !cancelledSalesAll?.length &&
+    !cancelledPurchasesAll?.length &&
+    !cancelledCashOpsAll.length &&
+    !cancelledMovementsAll.length;
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Arxiv</h1>
-        <p className="text-sm text-muted-foreground">
-          O&apos;chirilgan mahsulot, hamkor va omborlar - istalgan vaqt tiklash mumkin
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Arxiv</h1>
+          <p className="text-sm text-muted-foreground">
+            O&apos;chirilgan mahsulot, hamkor va omborlar - istalgan vaqt tiklash mumkin
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={() => setPurgeOpen(true)}
+          disabled={isEmpty}
+        >
+          <Trash2 className="h-4 w-4" />
+          Arxivni tozalash
+        </Button>
       </div>
+
+      <TableSearch
+        value={search}
+        onChange={setSearch}
+        placeholder="Arxivdan qidirish (nom, hamkor, tavsif)..."
+      />
 
       {isEmpty && (
         <Card>
@@ -693,86 +733,56 @@ export default function ArchivePage() {
         </Card>
       )}
 
-      {(accountingLedgerLoading || !!cancelledAccountingOps.length) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Wallet className="h-4 w-4" /> Bekor qilingan buxgalteriya amaliyotlari
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {accountingLedgerLoading ? (
-              <Skeleton className="h-16" />
-            ) : (
-              <>
-                <div className="hidden overflow-x-auto md:block">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Sana</TableHead>
-                        <TableHead>Yo&apos;nalish</TableHead>
-                        <TableHead>Tavsif</TableHead>
-                        <TableHead className="text-right">Summa</TableHead>
-                        <TableHead className="w-32"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {cancelledAccountingOps.map((r) => (
-                        <TableRow key={r.id}>
-                          <TableCell>{formatDateTime(r.date)}</TableCell>
-                          <TableCell>
-                            <span className="flex items-center gap-1">
-                              <Ban className="h-3.5 w-3.5 text-destructive" />
-                              {cashDirectionLabels[r.direction]}
-                            </span>
-                          </TableCell>
-                          <TableCell>{r.description}</TableCell>
-                          <TableCell className="text-right">{formatMoney(r.amountUzs)}</TableCell>
-                          <TableCell>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => restoreAccountingOpMutation.mutate(r)}
-                            >
-                              <RotateCcw className="h-4 w-4" />
-                              Tiklash
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="space-y-2 md:hidden">
-                  {cancelledAccountingOps.map((r) => (
-                    <div key={r.id} className="space-y-1.5 rounded-md border p-2.5 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center gap-1">
-                          <Ban className="h-3.5 w-3.5 text-destructive" />
-                          {cashDirectionLabels[r.direction]}
-                        </span>
-                        <span>{formatMoney(r.amountUzs)}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDateTime(r.date)} - {r.description}
-                      </p>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => restoreAccountingOpMutation.mutate(r)}
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        Tiklash
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      <AlertDialog open={purgeOpen} onOpenChange={setPurgeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Arxivni tozalash</AlertDialogTitle>
+            <AlertDialogDescription>
+              Arxivdagi mahsulot, hamkor, ombor va bekor qilingan savdo/xarid/kassa/ombor yozuvlari
+              <strong> butunlay o&apos;chiriladi va qayta tiklab bo&apos;lmaydi.</strong> Savdo, xarid
+              yoki to&apos;lov tarixi bog&apos;liq bo&apos;lgan mahsulot/hamkor/ombor arxivda qoladi
+              (hisobotlar buzilmasligi uchun). Qachon o&apos;chirilsin?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            {(
+              [
+                ["older_than_30_days", "30 kundan eskilarini", "Faqat 30 kundan oldin arxivlangan/bekor qilinganlar o'chadi"],
+                ["all", "Hozir - hammasini", "Arxivdagi barcha yozuvlar hoziroq o'chadi"],
+              ] as const
+            ).map(([value, title, hint]) => (
+              <label
+                key={value}
+                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
+                  purgeScope === value ? "border-destructive bg-destructive/5" : ""
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="purge-scope"
+                  className="mt-1"
+                  checked={purgeScope === value}
+                  onChange={() => setPurgeScope(value)}
+                />
+                <span>
+                  <span className="block font-medium">{title}</span>
+                  <span className="block text-xs text-muted-foreground">{hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => purgeMutation.mutate(purgeScope)}
+              disabled={purgeMutation.isPending}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {purgeMutation.isPending ? "O'chirilmoqda..." : "Ha, o'chirish"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

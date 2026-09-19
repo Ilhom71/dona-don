@@ -6,6 +6,7 @@ import {
   exportStockMovements,
   exportPartnerStatement,
   exportCashLedger,
+  exportPartners,
   exportProductsTemplate,
   exportExpensesTemplate,
 } from "./export";
@@ -70,6 +71,11 @@ excelRoutes.get("/stock-movements/export", async (c) => {
 excelRoutes.get("/cash/export", async (c) => {
   const buffer = await exportCashLedger();
   return excelResponse(c, buffer, "kassa.xlsx");
+});
+
+excelRoutes.get("/partners/export", async (c) => {
+  const buffer = await exportPartners();
+  return excelResponse(c, buffer, "hamkorlar.xlsx");
 });
 
 excelRoutes.get("/partners/:id/statement", async (c) => {

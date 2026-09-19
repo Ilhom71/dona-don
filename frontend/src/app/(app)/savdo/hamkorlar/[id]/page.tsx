@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Banknote, FileSpreadsheet, Pencil, Truck, Users, Wallet } from "lucide-react";
@@ -12,6 +12,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -20,6 +21,8 @@ import { PaymentFormDialog } from "@/components/payment-form-dialog";
 import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { BalanceBadge } from "@/components/balance-badge";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, apiUrl } from "@/lib/api";
 import type { Partner, PartnerLedgerRow } from "@/lib/types";
 import {
@@ -51,6 +54,20 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
     queryKey: ["partner-ledger", id],
     queryFn: () => api.get<PartnerLedgerRow[]>(`/partners/${id}/ledger`),
   });
+
+  // Qidiruv (mahsulot/mashina/to'lov turi) + sahifalash. Hook'lar shartli return'dan oldin bo'lishi shart.
+  const ledgerRows = useMemo(() => ledger ?? [], [ledger]);
+  const view = useTableView(
+    ledgerRows,
+    (r) =>
+      `${r.productName ?? ""} ${r.vehicleNumber ?? ""} ${r.kind === "payment" ? "to'lov" : r.kind === "supplier-payment" ? "yetkazib beruvchiga to'lov" : r.kind === "purchase-delivery" ? "xarid" : "savdo"}`
+  );
+  // Jami qator: bekor qilingan qatorlar hisobga kirmaydi (qoldiq ham ularni hisobga olmaydi).
+  const liveRows = view.filtered.filter((r) => !r.cancelled);
+  const totalGoods = liveRows.reduce((sum, r) => sum + (r.goodsValueUzs ?? 0), 0);
+  const totalFreight = liveRows.reduce((sum, r) => sum + (r.freightCostUzs ?? 0), 0);
+  const totalPaid = liveRows.reduce((sum, r) => sum + (r.paidUzs ?? 0), 0);
+  const rowOffset = (view.page - 1) * view.pageSize;
 
   if (partnerLoading || !partner) {
     return (
@@ -122,9 +139,15 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
         </div>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Mahsulot, mashina yoki tur bo'yicha qidirish..."
+      />
+
       {ledgerLoading ? (
         <Skeleton className="h-64" />
-      ) : !ledger || ledger.length === 0 ? (
+      ) : ledgerRows.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <Users className="h-8 w-8 text-muted-foreground" />
@@ -150,12 +173,12 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {ledger.map((row, i) => (
+                {view.pageItems.map((row, i) => (
                   <TableRow
                     key={row.id}
                     className={row.cancelled ? "opacity-50" : undefined}
                   >
-                    <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="text-muted-foreground">{rowOffset + i + 1}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatDateTime(row.date)}</TableCell>
                     {row.kind === "delivery" || row.kind === "purchase-delivery" ? (
                       <>
@@ -208,11 +231,22 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={6}>Jami ({view.total} ta yozuv)</TableCell>
+                  <TableCell className="text-right">{formatMoney(totalGoods)}</TableCell>
+                  <TableCell className="text-right">{formatMoney(totalFreight)}</TableCell>
+                  <TableCell className="text-right">{formatMoney(totalPaid)}</TableCell>
+                  <TableCell className="text-right">
+                    {formatMoney(view.filtered.at(-1)?.balanceUzs ?? 0)}
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {ledger.map((row, i) => (
+            {view.pageItems.map((row, i) => (
               <Card key={row.id} className={row.cancelled ? "opacity-50" : undefined}>
                 <CardContent className="space-y-1 py-3 text-sm">
                   <div className="flex items-start justify-between">
@@ -224,7 +258,7 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
                           : "To'lov"}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      #{i + 1} · {formatDateTime(row.date)}
+                      #{rowOffset + i + 1} · {formatDateTime(row.date)}
                     </span>
                   </div>
                   {row.kind === "delivery" || row.kind === "purchase-delivery" ? (
@@ -267,7 +301,29 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
                 </CardContent>
               </Card>
             ))}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami summa ({view.total} ta)</span>
+                <span>{formatMoney(totalGoods + totalFreight)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Berilgan pul</span>
+                <span>{formatMoney(totalPaid)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Qoldiq</span>
+                <span>{formatMoney(view.filtered.at(-1)?.balanceUzs ?? 0)}</span>
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

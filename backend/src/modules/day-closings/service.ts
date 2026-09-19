@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { dayClosings, dayOpenings } from "../../db/schema";
-import { getCashSummary, transferToAccounting } from "../cash/service";
+import { getCashSummary } from "../cash/service";
 import { getDashboardSummary } from "../reports/service";
 
 function todayKey() {
@@ -43,25 +43,19 @@ export async function openToday(note?: string | null) {
 }
 
 /**
- * Bugungi kunni "yopadi": 1) hozirgi kassa qoldig'ini buxgalteriyaga
- * o'tkazadi (haqiqiy pul harakati, xuddi qo'lda "Kassadan o'tkazish" kabi -
- * qoldiq 0 bo'lsa o'tkazma yaratilmaydi), 2) kassa qoldig'i/ombordagi qiymat/
- * bugungi savdo/davr kirim-chiqimini "suratga oladi" va saqlaydi, 3) kun
- * "yopiq" holatga o'tadi - qayta ochilmaguncha yangi savdo yaratib bo'lmaydi.
- * Kun avval ochilmagan bo'lsa xato qaytaradi. Bir kunga bitta yozuv - kuni
- * davomida qayta bosilsa, mavjud yozuv yangilanadi (upsert;
- * qoldiq allaqachon 0 bo'lgani uchun qayta o'tkazma bo'lmaydi).
+ * Bugungi kunni "yopadi": kassa qoldig'i/ombordagi qiymat/bugungi savdo/davr
+ * kirim-chiqimini "suratga oladi" va saqlaydi, kun "yopiq" holatga o'tadi -
+ * qayta ochilmaguncha yangi savdo yaratib bo'lmaydi. Kassadagi pul
+ * o'zgarmaydi (buxgalteriya bo'limi olib tashlangan, hamma narsa Kassada).
+ * Kun avval ochilmagan bo'lsa xato qaytaradi. Bir kunga bitta yozuv - kun
+ * davomida qayta bosilsa, mavjud yozuv yangilanadi (upsert).
  */
 export async function closeToday(note?: string | null) {
   const date = todayKey();
 
   // Hammasi bitta tranzaksiyada, `dayOpenings` yozuvini `FOR UPDATE` bilan
   // qulflab - shu kunga ikkita "Kunni yopish" so'rovi bir vaqtda kelsa
-  // (masalan tugma ikki marta tez bosilsa, yoki ikki tabda), ikkinchisi
-  // birinchisi commit bo'lguncha shu yerda kutadi. Shu bilan ikkalasi ham
-  // bir xil (hali o'tkazilmagan) qoldiqni o'qib, kassani ikki marta
-  // bo'shatib qo'yishining oldi olinadi (CLAUDE.md: pul bilan bog'liq
-  // operatsiyalar `.for("update")` bilan himoyalanishi kerak).
+  // ikkinchisi birinchisi commit bo'lguncha kutadi (ikki marta yopilmasin).
   return db.transaction(async (tx) => {
     const [opening] = await tx
       .select()
@@ -71,19 +65,8 @@ export async function closeToday(note?: string | null) {
     if (!opening) throw new Error("Kun hali ochilmagan - avval kunni oching");
 
     const qs = { from: new Date(`${date}T00:00:00`), to: new Date(`${date}T23:59:59.999`) };
-    // `currentBalanceUzs` har doim butun tarix bo'yicha (davr filtridan qat'i
-    // nazar) - shuning uchun shu yerdan olingan qiymat haqiqiy o'tkaziladigan
-    // summa uchun ham to'g'ri. Qulfdan keyin o'qilgani uchun (ikkinchi so'rov
-    // birinchisi commit bo'lguncha bloklanadi) - har doim eng so'nggi,
-    // haqiqiy qoldiqni ko'radi.
+    // `currentBalanceUzs` har doim butun tarix bo'yicha (davr filtridan qat'i nazar).
     const [cashSummary, dashboard] = await Promise.all([getCashSummary(qs), getDashboardSummary()]);
-
-    if (cashSummary.currentBalanceUzs > 0) {
-      await transferToAccounting(tx, {
-        amountUzs: cashSummary.currentBalanceUzs,
-        note: `Kunni yopish (${date})`,
-      });
-    }
 
     const values = {
       closingDate: date,

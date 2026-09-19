@@ -1,12 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
-import { payments, expenses, cashTransactions } from "../../db/schema";
-
-type CashAccount = "kassa" | "buxgalteriya";
-// `transferToAccounting` boshqa (kattaroq) tranzaksiya ichida ham
-// chaqirilishi mumkin (masalan kun yopishda) - shuning uchun `tx`ni
-// tashqaridan qabul qiladi (stock/service.ts'dagi bilan bir xil naqsh).
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+import { cashTransactions } from "../../db/schema";
 
 export type CashLedgerRow = {
   id: string;
@@ -24,70 +18,70 @@ export type CashLedgerRow = {
   bankAccount: string | null;
   description: string;
   amountUzs: number;
-  // Bekor qilingan yozuv ro'yxatda ko'rinadi (shaffoflik uchun), lekin
+  // Bekor qilingan yozuv ro'yxatda ko'rinadi (Arxiv uchun), lekin
   // qoldiq/yig'indi hisob-kitoblariga kirmaydi.
   cancelled: boolean;
   balanceUzs: number;
 };
 
 /**
- * Bitta hisob ("kassa" yoki "buxgalteriya") bo'yicha to'liq harakat tarixi,
- * yuguruvchi qoldiq bilan. `payments`/`expenses` doim kunlik savdo kassasiga
- * tegishli bo'lgani uchun faqat "kassa" hisobida ko'rinadi - "buxgalteriya"
- * hisobida faqat qo'lda kiritilgan (`cash_transactions`, shu hisobga
- * tegishli) yozuvlar bo'ladi (masalan kassadan o'tkazma, pul chiqarish).
+ * Kassaning to'liq harakat tarixi, yuguruvchi qoldiq bilan. Buxgalteriya
+ * bo'limi olib tashlangan - endi barcha pul harakati bitta Kassada:
+ * mijozdan to'lovlar, xarajatlar va qo'lda kiritilgan yozuvlar (eski
+ * "buxgalteriya" hisobiga yozilgan yozuvlar ham shu yerda ko'rinadi).
+ *
+ * Eski kassa<->buxgalteriya ichki o'tkazmalari (`transferGroupId` bor)
+ * ro'yxatdan chiqarib tashlanadi: ular bir-birini nolga tenglashtiradi
+ * (kassadan chiqim + buxgalteriyaga kirim), shuning uchun umumiy qoldiq
+ * o'zgarmaydi, faqat ro'yxatda keraksiz juft qator bo'lib turmaydi.
  *
  * Muhim: qoldiq (balanceUzs) har doim **butun tarix** bo'yicha hisoblanadi
  * (garchi natija `from`/`to` bilan filtrlansa ham) - aks holda filtrlangan
  * ro'yxatdagi "Qoldiq" ustuni haqiqiy qoldiqni emas, faqat shu davr ichidagi
  * farqni ko'rsatib, chalkashtirib yuboradi.
  */
-async function getLedgerForAccount(
-  account: CashAccount,
+export async function getCashLedger(
   filters: { from?: Date; to?: Date } = {}
 ): Promise<CashLedgerRow[]> {
   const manualRows = await db.query.cashTransactions.findMany({
-    where: (t, { eq }) => eq(t.account, account),
+    where: (t, { isNull }) => isNull(t.transferGroupId),
     with: { partner: true },
   });
+  const paymentRows = await db.query.payments.findMany({ with: { partner: true } });
+  const expenseRows = await db.query.expenses.findMany({ with: { partner: true } });
 
   const all: Omit<CashLedgerRow, "balanceUzs">[] = [];
 
-  if (account === "kassa") {
-    const paymentRows = await db.query.payments.findMany({ with: { partner: true } });
-    const expenseRows = await db.query.expenses.findMany({ with: { partner: true } });
+  for (const p of paymentRows) {
+    all.push({
+      id: p.id,
+      date: p.paymentDate.toISOString(),
+      direction: "in",
+      source: "payment",
+      category: "sale_payment",
+      partnerName: p.partner?.name ?? null,
+      method: p.method,
+      bankAccount: null,
+      description: p.notes || "Mijozdan to'lov",
+      amountUzs: Number(p.amountUzs),
+      cancelled: !!p.cancelledAt,
+    });
+  }
 
-    for (const p of paymentRows) {
-      all.push({
-        id: p.id,
-        date: p.paymentDate.toISOString(),
-        direction: "in",
-        source: "payment",
-        category: "sale_payment",
-        partnerName: p.partner?.name ?? null,
-        method: p.method,
-        bankAccount: null,
-        description: p.notes || "Mijozdan to'lov",
-        amountUzs: Number(p.amountUzs),
-        cancelled: !!p.cancelledAt,
-      });
-    }
-
-    for (const e of expenseRows) {
-      all.push({
-        id: e.id,
-        date: e.expenseDate.toISOString(),
-        direction: "out",
-        source: "expense",
-        category: e.category,
-        partnerName: e.partner?.name ?? null,
-        method: e.method,
-        bankAccount: null,
-        description: e.description,
-        amountUzs: Number(e.amountUzs),
-        cancelled: !!e.cancelledAt,
-      });
-    }
+  for (const e of expenseRows) {
+    all.push({
+      id: e.id,
+      date: e.expenseDate.toISOString(),
+      direction: "out",
+      source: "expense",
+      category: e.category,
+      partnerName: e.partner?.name ?? null,
+      method: e.method,
+      bankAccount: null,
+      description: e.description,
+      amountUzs: Number(e.amountUzs),
+      cancelled: !!e.cancelledAt,
+    });
   }
 
   for (const m of manualRows) {
@@ -108,7 +102,7 @@ async function getLedgerForAccount(
 
   all.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-  // Bekor qilingan yozuvlar ro'yxatda ko'rinadi, lekin qoldiqqa qo'shilmaydi.
+  // Bekor qilingan yozuvlar ro'yxatda ko'rinadi (Arxiv uchun), lekin qoldiqqa qo'shilmaydi.
   let balance = 0;
   const withBalance: CashLedgerRow[] = all.map((r) => {
     if (!r.cancelled) balance += r.direction === "in" ? r.amountUzs : -r.amountUzs;
@@ -125,43 +119,22 @@ async function getLedgerForAccount(
   });
 }
 
-/** Kassa (kunlik savdo) hisobining harakati - eski nom, xatti-harakati saqlanib qolgan. */
-export async function getCashLedger(filters: { from?: Date; to?: Date } = {}) {
-  return getLedgerForAccount("kassa", filters);
-}
-
-/** Buxgalteriya (firmaning joriy hisobi) harakati. */
-export async function getAccountingLedger(filters: { from?: Date; to?: Date } = {}) {
-  return getLedgerForAccount("buxgalteriya", filters);
-}
-
 /**
- * Bitta hisob yig'indisi: `currentBalanceUzs` har doim **hozirgi (butun
- * tarix)** qoldiq, `periodInUzs`/`periodOutUzs` esa faqat berilgan davr
- * bo'yicha kirim/chiqim yig'indisi (davr berilmasa - butun tarix bo'yicha).
+ * Kassa yig'indisi: `currentBalanceUzs` har doim **hozirgi (butun tarix)**
+ * qoldiq, `periodInUzs`/`periodOutUzs` esa faqat berilgan davr bo'yicha
+ * kirim/chiqim yig'indisi (davr berilmasa - butun tarix bo'yicha).
  */
-async function getSummaryForAccount(
-  account: CashAccount,
-  filters: { from?: Date; to?: Date } = {}
-) {
-  const fullLedger = await getLedgerForAccount(account, {});
+export async function getCashSummary(filters: { from?: Date; to?: Date } = {}) {
+  const fullLedger = await getCashLedger({});
   const currentBalanceUzs = fullLedger.at(-1)?.balanceUzs ?? 0;
 
   const period = (
-    filters.from || filters.to ? await getLedgerForAccount(account, filters) : fullLedger
+    filters.from || filters.to ? await getCashLedger(filters) : fullLedger
   ).filter((r) => !r.cancelled);
   const periodInUzs = period.filter((r) => r.direction === "in").reduce((s, r) => s + r.amountUzs, 0);
   const periodOutUzs = period.filter((r) => r.direction === "out").reduce((s, r) => s + r.amountUzs, 0);
 
   return { currentBalanceUzs, periodInUzs, periodOutUzs };
-}
-
-export async function getCashSummary(filters: { from?: Date; to?: Date } = {}) {
-  return getSummaryForAccount("kassa", filters);
-}
-
-export async function getAccountingSummary(filters: { from?: Date; to?: Date } = {}) {
-  return getSummaryForAccount("buxgalteriya", filters);
 }
 
 /**
@@ -193,77 +166,12 @@ export async function createCashTransaction(input: {
 }
 
 /**
- * Kassadan buxgalteriya (joriy hisob)ga pul o'tkazadi - bitta amalda ikkita
- * bog'liq yozuv yaratiladi: kassadan chiqim + buxgalteriyaga kirim. Shu bilan
- * kassaning haqiqiy naqd qoldig'i kamayadi va joriy hisob qoldig'i oshadi -
- * ikkalasi ham har doim bir-biriga mos (dinamik, alohida hisoblanmaydi).
- * `tx` chaqiruvchi tomonidan beriladi (kerak bo'lsa `db.transaction(...)`
- * bilan ochib) - shu bilan bu funksiya kattaroq tranzaksiyaning bir qismi
- * sifatida ham (masalan kun yopish - qulflash bilan) ishlatilishi mumkin.
- */
-export async function transferToAccounting(tx: Tx, input: { amountUzs: number; note: string }) {
-  // Ikkala yozuv bitta `transferGroupId` bilan bog'lanadi - shunda bittasi
-  // bekor qilinganda ikkinchisi ham avtomatik bekor qilinadi (aks holda
-  // faqat bitta tomon bekor bo'lib, kassa/buxgalteriya qoldig'i mos kelmay qoladi).
-  const transferGroupId = crypto.randomUUID();
-  const [out] = await tx
-    .insert(cashTransactions)
-    .values({
-      direction: "out",
-      account: "kassa",
-      amountUzs: String(input.amountUzs),
-      note: `Buxgalteriyaga o'tkazma: ${input.note}`,
-      transferGroupId,
-    })
-    .returning();
-  const [inRow] = await tx
-    .insert(cashTransactions)
-    .values({
-      direction: "in",
-      account: "buxgalteriya",
-      amountUzs: String(input.amountUzs),
-      note: `Kassadan o'tkazma: ${input.note}`,
-      transferGroupId,
-    })
-    .returning();
-  return { out, in: inRow };
-}
-
-/**
- * Buxgalteriya (joriy hisob)dan pul chiqarish - masalan egasi rasmiy
- * hisobdan mablag' oldi yoki bank orqali chiqim qildi. Faqat buxgalteriya
- * hisobiga tegishli, kassaga taalluqli emas.
- */
-export async function withdrawFromAccounting(input: {
-  amountUzs: number;
-  note: string;
-  method?: "cash" | "card" | "bank";
-  bankAccount?: string | null;
-}) {
-  const [row] = await db
-    .insert(cashTransactions)
-    .values({
-      direction: "out",
-      account: "buxgalteriya",
-      amountUzs: String(input.amountUzs),
-      method: input.method ?? "cash",
-      bankAccount: input.method === "bank" ? input.bankAccount ?? null : null,
-      note: input.note,
-    })
-    .returning();
-  return row;
-}
-
-/**
  * Qo'lda kiritilgan kassa yozuvini bekor qiladi - o'chirilmaydi, faqat
- * cancelledAt/cancelReason to'ldiriladi (immutable ledger). Kassa
- * qoldig'idan chiqarib tashlanadi. Arxiv sahifasidan "Tiklash" bilan
- * qaytariladi.
+ * cancelledAt/cancelReason to'ldiriladi. Kassa qoldig'idan chiqarib
+ * tashlanadi. Arxiv sahifasidan "Tiklash" bilan qaytariladi.
  *
- * Agar yozuv kassa->buxgalteriya o'tkazmaning bir tomoni bo'lsa
- * (`transferGroupId` bor), ikkinchi tomoni ham birga bekor qilinadi -
- * aks holda faqat bitta hisobning qoldig'i tuzatilib, ikkinchisi eskicha
- * qolib ketardi (kassa/buxgalteriya orasida mos kelmaslik).
+ * Agar yozuv eski ichki o'tkazmaning bir tomoni bo'lsa (`transferGroupId`
+ * bor), ikkinchi tomoni ham birga bekor qilinadi.
  */
 export async function cancelCashTransaction(id: string, reason?: string | null) {
   return db.transaction(async (tx) => {

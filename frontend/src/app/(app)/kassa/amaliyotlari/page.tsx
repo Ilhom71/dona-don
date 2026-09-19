@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Ban,
   CircleDollarSign,
+  HandCoins,
   Landmark,
   MinusCircle,
   PlusCircle,
@@ -23,6 +24,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -41,6 +43,8 @@ import { ExcelActions } from "@/components/excel-actions";
 import { KassaSubNav } from "@/components/kassa-subnav";
 import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
 import { ExpenseFormDialog } from "@/components/expense-form-dialog";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { CashLedgerRow, CashSummary, Partner } from "@/lib/types";
 import { cashDirectionLabels, formatDateTime, formatMoney, paymentMethodLabels } from "@/lib/format";
@@ -71,11 +75,6 @@ export default function CashOperationsPage() {
       toast.success("Bekor qilindi");
       queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
       queryClient.invalidateQueries({ queryKey: ["cash-summary"] });
-      // Bekor qilingan yozuv kassa->buxgalteriya o'tkazmaning bir tomoni
-      // bo'lishi mumkin - bunda ikkinchi tomon (buxgalteriya) ham serverda
-      // avtomatik bekor qilinadi, shuning uchun u yerni ham yangilaymiz.
-      queryClient.invalidateQueries({ queryKey: ["accounting-ledger"] });
-      queryClient.invalidateQueries({ queryKey: ["accounting-summary"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["accounting-report"] });
       queryClient.invalidateQueries({ queryKey: ["partners"] });
@@ -92,31 +91,23 @@ export default function CashOperationsPage() {
   if (to) params.set("to", `${to}T23:59:59`);
   const qs = params.toString();
 
-  const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["cash-summary", from, to],
-    queryFn: () => api.get<CashSummary>(`/cash/summary${qs ? `?${qs}` : ""}`),
+  // "Qozondagi pul", "Qarzlarim", "Menda qarzdorlar" va "Asosiy o'zim pulim"
+  // kartalari - davrga bog'liq emas, har doim hozirgi holat. Buxgalteriya
+  // olib tashlangan: Qozondagi pul = Kassa qoldig'i (hamma narsa Kassada).
+  const { data: allTimeSummary, isLoading: potLoading } = useQuery({
+    queryKey: ["cash-summary", "all"],
+    queryFn: () => api.get<CashSummary>("/cash/summary"),
   });
-
-  // "Qozondagi pul" (kassa+buxgalteriya), "Qarzlarim" va "Asosiy o'zim
-  // pulim" kartalari uchun - davrga bog'liq emas, har doim hozirgi holat.
-  const { data: accountingSummary, isLoading: accountingLoading } = useQuery({
-    queryKey: ["accounting-summary", "all"],
-    queryFn: () => api.get<CashSummary>("/cash/accounting/summary"),
-  });
-  const { data: partners, isLoading: partnersLoading } = useQuery({
+  const { data: partners, isLoading: debtsLoading } = useQuery({
     queryKey: ["partners"],
     queryFn: () => api.get<Partner[]>("/partners"),
   });
-  const potMoneyUzs = (summary?.currentBalanceUzs ?? 0) + (accountingSummary?.currentBalanceUzs ?? 0);
-  // Faqat manfiy balanslar (biz hamkorga qarzdor bo'lganlar) - musbatlari
-  // "mijoz bizga qarzdor", bu "mening qarzim" emas.
-  const myDebtsUzs = (partners ?? []).reduce(
-    (sum, p) => sum + Math.max(0, -p.balanceUzs),
-    0
-  );
+  const potMoneyUzs = allTimeSummary?.currentBalanceUzs ?? 0;
+  // Manfiy balanslar - biz hamkorga qarzdormiz ("Qarzlarim"); musbatlari -
+  // hamkor bizga qarzdor ("Menda qarzdorlar").
+  const myDebtsUzs = (partners ?? []).reduce((sum, p) => sum + Math.max(0, -p.balanceUzs), 0);
+  const owedToMeUzs = (partners ?? []).reduce((sum, p) => sum + Math.max(0, p.balanceUzs), 0);
   const netOwnMoneyUzs = potMoneyUzs - myDebtsUzs;
-  const potLoading = summaryLoading || accountingLoading;
-  const debtsLoading = partnersLoading;
 
   const { data: ledger, isLoading: ledgerLoading } = useQuery({
     queryKey: ["cash-ledger", from, to],
@@ -124,7 +115,19 @@ export default function CashOperationsPage() {
   });
   // Bekor qilingan yozuvlar bu ro'yxatda ko'rinmaydi - ular faqat Arxiv
   // bo'limining "Bekor qilingan kassa amaliyotlari" qismida ko'rinadi.
-  const visibleLedger = (ledger ?? []).filter((r) => !r.cancelled);
+  // Eng yangisi tepada.
+  const visibleLedger = useMemo(
+    () => [...(ledger ?? [])].filter((r) => !r.cancelled).reverse(),
+    [ledger]
+  );
+  const view = useTableView(
+    visibleLedger,
+    (r) =>
+      `${r.description} ${r.partnerName ?? ""} ${paymentMethodLabels[r.method] ?? r.method} ${cashDirectionLabels[r.direction]} ${r.bankAccount ?? ""}`
+  );
+  // Jadval ostidagi jami - qidiruvdan o'tgan barcha qatorlar bo'yicha.
+  const totalIn = view.filtered.filter((r) => r.direction === "in").reduce((sum, r) => sum + r.amountUzs, 0);
+  const totalOut = view.filtered.filter((r) => r.direction === "out").reduce((sum, r) => sum + r.amountUzs, 0);
 
   return (
     <div className="space-y-4">
@@ -163,7 +166,7 @@ export default function CashOperationsPage() {
 
       {/* Foydalanuvchi so'roviga ko'ra: umumiy moliyaviy holat - davrga
           bog'liq bo'lmagan, har doim hozirgi holat. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -177,7 +180,7 @@ export default function CashOperationsPage() {
             ) : (
               <>
                 <p className="text-xl font-semibold">{formatMoney(potMoneyUzs)}</p>
-                <p className="text-xs text-muted-foreground">Kassa + Buxgalteriya</p>
+                <p className="text-xs text-muted-foreground">Kassadagi hozirgi pul</p>
               </>
             )}
           </CardContent>
@@ -193,7 +196,25 @@ export default function CashOperationsPage() {
             ) : (
               <>
                 <p className="text-xl font-semibold text-destructive">{formatMoney(myDebtsUzs)}</p>
-                <p className="text-xs text-muted-foreground">Hamkorlarga qarzdor summa</p>
+                <p className="text-xs text-muted-foreground">Men hamkorlarga qarzdorman</p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Menda qarzdorlar
+            </CardTitle>
+            <HandCoins className="h-4 w-4 text-emerald-600" />
+          </CardHeader>
+          <CardContent>
+            {debtsLoading ? (
+              <Skeleton className="h-7 w-32" />
+            ) : (
+              <>
+                <p className="text-xl font-semibold text-emerald-600">{formatMoney(owedToMeUzs)}</p>
+                <p className="text-xs text-muted-foreground">Hamkorlar menga qarzdor</p>
               </>
             )}
           </CardContent>
@@ -237,6 +258,12 @@ export default function CashOperationsPage() {
         </div>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Tavsif, hamkor yoki usul bo'yicha qidirish..."
+      />
+
       {ledgerLoading ? (
         <Skeleton className="h-64" />
       ) : visibleLedger.length === 0 ? (
@@ -263,7 +290,7 @@ export default function CashOperationsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {[...visibleLedger].reverse().map((r) => (
+                {view.pageItems.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>{formatDateTime(r.date)}</TableCell>
                     <TableCell>
@@ -301,11 +328,24 @@ export default function CashOperationsPage() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={5}>
+                    Jami ({view.total} ta): kirim +{formatMoney(totalIn)} · chiqim −{formatMoney(totalOut)}
+                  </TableCell>
+                  <TableCell
+                    className={`text-right ${totalIn - totalOut >= 0 ? "text-emerald-600" : "text-destructive"}`}
+                  >
+                    {formatMoney(totalIn - totalOut)}
+                  </TableCell>
+                  <TableCell colSpan={2} />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {[...visibleLedger].reverse().map((r) => (
+            {view.pageItems.map((r) => (
               <Card key={r.id}>
                 <CardContent className="space-y-1 py-3 text-sm">
                   <div className="flex items-start justify-between">
@@ -343,7 +383,25 @@ export default function CashOperationsPage() {
                 </CardContent>
               </Card>
             ))}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami kirim ({view.total} ta)</span>
+                <span className="text-emerald-600">+{formatMoney(totalIn)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Jami chiqim</span>
+                <span className="text-destructive">−{formatMoney(totalOut)}</span>
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

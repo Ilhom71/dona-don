@@ -9,15 +9,13 @@ const tabs = [
   { label: "Kassa amaliyotlari", href: "/kassa/amaliyotlari" },
   { label: "Savdolar", href: "/kassa/savdolar" },
   { label: "Hamkorlar", href: "/kassa/hamkorlar" },
-  { label: "Buxgalteriya", href: "/kassa/buxgalteriya" },
 ];
 
 /**
  * Kassa bo'limining o'z ichki nav-tab qatori - har biri bosilganda to'liq
  * alohida sahifa ochiladi (asosiy sidebar nav'dan tashqari, Kassa
- * bo'limining o'zi uchun). Barcha 5 ta Kassa sahifasining tepasida ishlatiladi.
- * "Kassa" - faqat kunlik naqd savdo kassasi, "Buxgalteriya" - firmaning
- * joriy hisobi (rasmiy, kassadan o'tkazma orqali to'ldiriladi).
+ * bo'limining o'zi uchun). Barcha 4 ta Kassa sahifasining tepasida ishlatiladi.
+ * Buxgalteriya bo'limi olib tashlangan - hamma narsa Kassada ko'rinadi.
  */
 export function KassaSubNav() {
   const pathname = usePathname();

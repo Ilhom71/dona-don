@@ -10,7 +10,6 @@ import {
   Receipt,
   CircleDollarSign,
   HandCoins,
-  Landmark,
   type LucideIcon,
 } from "lucide-react";
 
@@ -27,8 +26,7 @@ export type NavGroup = {
 
 // Sidebarda aynan 4 ta bo'lim (Kassa/Ombor/Savdo/Arxiv) - foydalanuvchi
 // so'roviga ko'ra. Kassa/Ombor/Savdo ko'p sahifali - ular ichidagi
-// bo'limlar (masalan Kassa ostida: Amaliyotlari, Savdolar, Hamkorlar,
-// Buxgalteriya) sidebarda o'sha guruh ichiga joylashtirilib (yoyilib/
+// bo'limlar (masalan Kassa ostida: Amaliyotlari, Savdolar, Hamkorlar) sidebarda o'sha guruh ichiga joylashtirilib (yoyilib/
 // yig'ilib turadigan) ko'rsatiladi. Arxiv - bitta sahifali, shuning uchun
 // oddiy alohida havola sifatida ko'rinadi.
 export const navGroups: NavGroup[] = [
@@ -39,7 +37,6 @@ export const navGroups: NavGroup[] = [
       { label: "Amaliyotlari", href: "/kassa/amaliyotlari", icon: Receipt },
       { label: "Savdolar", href: "/kassa/savdolar", icon: CircleDollarSign },
       { label: "Hamkorlar", href: "/kassa/hamkorlar", icon: HandCoins },
-      { label: "Buxgalteriya", href: "/kassa/buxgalteriya", icon: Landmark },
     ],
   },
   {

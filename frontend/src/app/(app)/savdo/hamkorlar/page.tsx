@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -38,6 +39,9 @@ import {
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { PaymentFormDialog } from "@/components/payment-form-dialog";
 import { BalanceBadge } from "@/components/balance-badge";
+import { ExcelActions } from "@/components/excel-actions";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, apiUrl, ApiError } from "@/lib/api";
 import type { Partner } from "@/lib/types";
 import { partnerTypeLabels } from "@/lib/format";
@@ -48,6 +52,11 @@ export default function PartnersPage() {
     queryKey: ["partners"],
     queryFn: () => api.get<Partner[]>("/partners"),
   });
+
+  const partners = useMemo(() => data ?? [], [data]);
+  // Qidiruv (ism/telefon/tur) + sahifalash; jami qator BARCHA filtrlangan qatorlardan hisoblanadi.
+  const view = useTableView(partners, (p) => `${p.name} ${p.phone ?? ""} ${partnerTypeLabels[p.type]}`);
+  const totalBalance = view.filtered.reduce((sum, p) => sum + p.balanceUzs, 0);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Partner | null>(null);
@@ -72,17 +81,26 @@ export default function PartnersPage() {
           <h1 className="text-2xl font-semibold">Hamkorlar</h1>
           <p className="text-sm text-muted-foreground">Mijozlar va yetkazib beruvchilar</p>
         </div>
-        <Button
-          size="sm"
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Yangi hamkor
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ExcelActions exportPath="/excel/partners/export" exportFileName="hamkorlar.xlsx" />
+          <Button
+            size="sm"
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Yangi hamkor
+          </Button>
+        </div>
       </div>
+
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Ism, telefon yoki tur bo'yicha qidirish..."
+      />
 
       {isLoading ? (
         <Skeleton className="h-64" />
@@ -107,7 +125,7 @@ export default function PartnersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((p) => (
+                {view.pageItems.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium">
                       <Link href={`/savdo/hamkorlar/${p.id}`} className="hover:underline">
@@ -168,11 +186,20 @@ export default function PartnersPage() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={3}>Jami ({view.total} ta hamkor)</TableCell>
+                  <TableCell>
+                    <BalanceBadge value={totalBalance} />
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {data.map((p) => (
+            {view.pageItems.map((p) => (
               <Card key={p.id}>
                 <CardContent className="space-y-2 py-3">
                   <div className="flex items-start justify-between">
@@ -229,7 +256,19 @@ export default function PartnersPage() {
                 </CardContent>
               </Card>
             ))}
+            <div className="flex items-center justify-between rounded-md border bg-muted p-3 text-sm font-semibold">
+              <span>Jami ({view.total} ta)</span>
+              <BalanceBadge value={totalBalance} />
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

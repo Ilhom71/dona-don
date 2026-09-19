@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Banknote, Plus, Users } from "lucide-react";
@@ -12,12 +12,16 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { KassaSubNav } from "@/components/kassa-subnav";
 import { BalanceBadge } from "@/components/balance-badge";
+import { ExcelActions } from "@/components/excel-actions";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
 import { api } from "@/lib/api";
@@ -44,7 +48,17 @@ export default function KassaPartnersPage() {
   // Standart holatda faqat haqiqiy moliyaviy amaliyoti (qarzi/qarzdorligi)
   // bor hamkorlar ko'rsatiladi - bu sahifa moliyaviy ko'rinish, "hisob-kitob
   // qiladigan" hamkorlar uchun.
-  const visiblePartners = showAll ? data ?? [] : (data ?? []).filter((p) => Number(p.balanceUzs) !== 0);
+  const visiblePartners = useMemo(
+    () => (showAll ? data ?? [] : (data ?? []).filter((p) => Number(p.balanceUzs) !== 0)),
+    [data, showAll]
+  );
+  const view = useTableView(
+    visiblePartners,
+    (p) => `${p.name} ${p.phone ?? ""} ${p.bankAccount ?? ""} ${partnerTypeLabels[p.type]}`
+  );
+  const customerDebtOf = (p: Partner) => Math.max(0, Number(p.totalSalesUzs) - Number(p.totalPaidUzs));
+  const totalCustomerDebt = view.filtered.reduce((sum, p) => sum + customerDebtOf(p), 0);
+  const totalBalance = view.filtered.reduce((sum, p) => sum + p.balanceUzs, 0);
 
   return (
     <div className="space-y-4">
@@ -57,7 +71,8 @@ export default function KassaPartnersPage() {
             Moliyaviy ko&apos;rinish: mijoz va yetkazib beruvchi balanslari
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <ExcelActions exportPath="/excel/partners/export" exportFileName="hamkorlar.xlsx" />
           <Button size="sm" variant="outline" onClick={() => setShowAll((v) => !v)}>
             {showAll ? "Faqat qarzi/qarzdorligi borlar" : "Barchasini ko'rsatish"}
           </Button>
@@ -67,6 +82,12 @@ export default function KassaPartnersPage() {
           </Button>
         </div>
       </div>
+
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Ism, telefon yoki hisob raqami bo'yicha qidirish..."
+      />
 
       {isLoading ? (
         <Skeleton className="h-64" />
@@ -95,7 +116,7 @@ export default function KassaPartnersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visiblePartners.map((p) => {
+                {view.pageItems.map((p) => {
                   const customerDebt = Number(p.totalSalesUzs) - Number(p.totalPaidUzs);
                   return (
                     <TableRow key={p.id}>
@@ -128,11 +149,21 @@ export default function KassaPartnersPage() {
                   );
                 })}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={2}>Jami ({view.total} ta hamkor)</TableCell>
+                  <TableCell className="text-right">{formatMoney(totalCustomerDebt)}</TableCell>
+                  <TableCell className="text-right">
+                    <BalanceBadge value={totalBalance} />
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {visiblePartners.map((p) => {
+            {view.pageItems.map((p) => {
               const customerDebt = Number(p.totalSalesUzs) - Number(p.totalPaidUzs);
               return (
                 <Card key={p.id}>
@@ -172,7 +203,25 @@ export default function KassaPartnersPage() {
                 </Card>
               );
             })}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami mijoz qarzi ({view.total} ta)</span>
+                <span>{formatMoney(totalCustomerDebt)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Jami balans</span>
+                <BalanceBadge value={totalBalance} />
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

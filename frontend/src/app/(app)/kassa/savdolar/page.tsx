@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -31,6 +32,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { KassaSubNav } from "@/components/kassa-subnav";
 import { StatCard } from "@/components/stat-card";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { Sale } from "@/lib/types";
 import { formatDate, formatMoney, paymentStatusLabels } from "@/lib/format";
@@ -65,7 +68,14 @@ export default function KassaSalesPage() {
 
   // Bekor qilingan savdolar bu ro'yxatda ko'rinmaydi - Arxivning "Bekor
   // qilingan savdolar" qismida ko'rinadi.
-  const active = (data ?? []).filter((s) => !s.cancelledAt);
+  const active = useMemo(() => (data ?? []).filter((s) => !s.cancelledAt), [data]);
+  const view = useTableView(
+    active,
+    (s) => `${s.partner?.name ?? ""} ${s.vehicleNumber ?? ""} ${paymentStatusLabels[s.paymentStatus]} ${formatDate(s.saleDate)}`
+  );
+  // Jadval ostidagi "Jami" qatori - qidiruvdan o'tgan barcha qatorlar bo'yicha.
+  const tableTotal = view.filtered.reduce((sum, s) => sum + Number(s.totalAmountUzs), 0);
+  const tablePaid = view.filtered.reduce((sum, s) => sum + Number(s.paidAmountUzs), 0);
   const totalUzs = active.reduce((sum, s) => sum + Number(s.totalAmountUzs), 0);
   const paidUzs = active.reduce((sum, s) => sum + Number(s.paidAmountUzs), 0);
   const debtUzs = totalUzs - paidUzs;
@@ -115,6 +125,12 @@ export default function KassaSalesPage() {
         </div>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Hamkor, mashina yoki holat bo'yicha qidirish..."
+      />
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Jami savdo" value={formatMoney(totalUzs)} icon={ShoppingCart} />
         <StatCard
@@ -156,7 +172,7 @@ export default function KassaSalesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {active.map((s) => (
+                {view.pageItems.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell>{formatDate(s.saleDate)}</TableCell>
                     <TableCell className="font-medium">
@@ -188,11 +204,20 @@ export default function KassaSalesPage() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={3}>Jami ({view.total} ta savdo)</TableCell>
+                  <TableCell className="text-right">{formatMoney(tableTotal)}</TableCell>
+                  <TableCell className="text-right">{formatMoney(tablePaid)}</TableCell>
+                  <TableCell className="text-right">{formatMoney(tableTotal - tablePaid)}</TableCell>
+                  <TableCell colSpan={2} />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {active.map((s) => (
+            {view.pageItems.map((s) => (
               <Card key={s.id}>
                 <CardContent className="space-y-2 py-3 text-sm">
                   <div className="flex items-start justify-between">
@@ -225,7 +250,29 @@ export default function KassaSalesPage() {
                 </CardContent>
               </Card>
             ))}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami summa ({view.total} ta)</span>
+                <span>{formatMoney(tableTotal)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>To'langan</span>
+                <span>{formatMoney(tablePaid)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Qoldiq</span>
+                <span>{formatMoney(tableTotal - tablePaid)}</span>
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

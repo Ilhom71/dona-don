@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,6 +22,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -37,6 +38,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ExcelActions } from "@/components/excel-actions";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, apiUrl, ApiError } from "@/lib/api";
 import type { Partner, Sale, PaymentStatus } from "@/lib/types";
 import { formatDate, formatMoney, formatQuantity, paymentStatusLabels } from "@/lib/format";
@@ -82,7 +85,15 @@ export default function SalesHistoryPage() {
   });
   // Bekor qilingan savdolar bu ro'yxatda ko'rinmaydi - Arxivning "Bekor
   // qilingan savdolar" qismida ko'rinadi.
-  const data = rawData?.filter((s) => !s.cancelledAt);
+  const data = useMemo(() => rawData?.filter((s) => !s.cancelledAt), [rawData]);
+  const view = useTableView(
+    data ?? [],
+    (s) =>
+      `${s.partner?.name ?? ""} ${itemsSummary(s)} ${s.vehicleNumber ?? ""} ${paymentStatusLabels[s.paymentStatus]}`
+  );
+  // Jami qator (qidiruvdan o'tgan barcha savdolar) - so'mdagi ekvivalentda.
+  const totalUzs = view.filtered.reduce((sum, s) => sum + Number(s.totalAmountUzs), 0);
+  const totalPaidUzs = view.filtered.reduce((sum, s) => sum + Number(s.paidAmountUzs), 0);
 
   function toggleOne(id: string, checked: boolean) {
     setSelected((prev) => {
@@ -94,11 +105,12 @@ export default function SalesHistoryPage() {
   }
 
   function toggleAll(checked: boolean) {
-    if (checked) setSelected(new Set(data?.map((s) => s.id) ?? []));
+    // Qidiruvdan o'tgan barcha savdolar tanlanadi (faqat joriy sahifa emas).
+    if (checked) setSelected(new Set(view.filtered.map((s) => s.id)));
     else setSelected(new Set());
   }
 
-  const allChecked = !!data?.length && data.every((s) => selected.has(s.id));
+  const allChecked = view.filtered.length > 0 && view.filtered.every((s) => selected.has(s.id));
 
   // Faqat belgilangan savdolarni Excel'ga eksport qiladi (butun ro'yxat emas).
   async function handleExportSelected() {
@@ -205,6 +217,12 @@ export default function SalesHistoryPage() {
         </Select>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Hamkor, mahsulot, mashina yoki holat bo'yicha qidirish..."
+      />
+
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/50 p-3 text-sm">
           <span className="font-medium">{selected.size} ta savdo tanlandi</span>
@@ -258,7 +276,7 @@ export default function SalesHistoryPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((s) => (
+                {view.pageItems.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell>
                       <Checkbox
@@ -298,11 +316,19 @@ export default function SalesHistoryPage() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={5}>Jami ({view.total} ta savdo, so'mda)</TableCell>
+                  <TableCell>{formatMoney(totalUzs)}</TableCell>
+                  <TableCell>{formatMoney(totalPaidUzs)}</TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {data.map((s) => (
+            {view.pageItems.map((s) => (
               <Card key={s.id}>
                 <CardContent className="space-y-2 py-3">
                   <div className="flex items-start gap-2">
@@ -354,7 +380,25 @@ export default function SalesHistoryPage() {
                 </CardContent>
               </Card>
             ))}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami savdo ({view.total} ta)</span>
+                <span>{formatMoney(totalUzs)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>To'langan</span>
+                <span>{formatMoney(totalPaidUzs)}</span>
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Package, ShoppingCart, Layers } from "lucide-react";
@@ -13,6 +13,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -36,6 +37,8 @@ import {
 import { ProductFormDialog } from "@/components/product-form-dialog";
 import { ProductBulkCreateDialog } from "@/components/product-bulk-create-dialog";
 import { ExcelActions } from "@/components/excel-actions";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { Product, ProductStock, StockLot } from "@/lib/types";
 import { formatDate, formatMoney, formatQuantity, movementSourceLabels, unitLabels } from "@/lib/format";
@@ -62,6 +65,18 @@ export default function ProductsPage() {
     (stockLevels ?? []).filter((s) => s.productId === productId && Number(s.quantity) > 0);
 
   const lotsForProduct = (productId: string) => (lots ?? []).filter((l) => l.productId === productId);
+
+  const products = useMemo(() => data ?? [], [data]);
+  const view = useTableView(products, (p) => `${p.name} ${p.notes ?? ""}`);
+  // Jami qator: qoldiq kg'da (1 t = 1000 kg) va umumiy qiymat - qidiruvdan o'tgan barcha qatorlar bo'yicha.
+  const totalKg = view.filtered.reduce(
+    (sum, p) => sum + Number(p.stockQuantity) * (p.unit === "ton" ? 1000 : 1),
+    0
+  );
+  const totalValue = view.filtered.reduce(
+    (sum, p) => sum + Number(p.stockQuantity) * Number(p.avgCostUzs),
+    0
+  );
 
   const [formOpen, setFormOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -106,6 +121,12 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Mahsulot nomi bo'yicha qidirish..."
+      />
+
       {isLoading ? (
         <Skeleton className="h-64" />
       ) : !data || data.length === 0 ? (
@@ -137,7 +158,7 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((p) => (
+                {view.pageItems.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium">{p.name}</TableCell>
                     <TableCell>{unitLabels[p.unit]}</TableCell>
@@ -204,12 +225,21 @@ export default function ProductsPage() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={2}>Jami ({view.total} ta mahsulot)</TableCell>
+                  <TableCell>{formatQuantity(totalKg, "kg")}</TableCell>
+                  <TableCell colSpan={3} />
+                  <TableCell className="text-right">{formatMoney(totalValue)}</TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
-            {data.map((p) => (
+            {view.pageItems.map((p) => (
               <Card key={p.id}>
                 <CardContent className="space-y-2 py-3">
                   <div className="flex items-start justify-between">
@@ -276,7 +306,25 @@ export default function ProductsPage() {
                 </CardContent>
               </Card>
             ))}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami qoldiq ({view.total} ta)</span>
+                <span>{formatQuantity(totalKg, "kg")}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Jami qiymat</span>
+                <span>{formatMoney(totalValue)}</span>
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

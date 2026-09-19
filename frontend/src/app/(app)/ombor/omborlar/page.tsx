@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -33,6 +33,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { WarehouseFormDialog } from "@/components/warehouse-form-dialog";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { StockAdjustmentDialog } from "@/components/stock-adjustment-dialog";
 import { api, ApiError } from "@/lib/api";
 import type { ProductStock, StockLot, Warehouse } from "@/lib/types";
@@ -59,6 +61,10 @@ export default function WarehousesPage() {
     queryKey: ["stock-lots"],
     queryFn: () => api.get<StockLot[]>("/stock/lots"),
   });
+
+  // Ombor kartalari uchun qidiruv + sahifalash (nom/manzil bo'yicha).
+  const warehouseList = useMemo(() => warehouses ?? [], [warehouses]);
+  const view = useTableView(warehouseList, (w) => `${w.name} ${w.address ?? ""}`, 12);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Warehouse | null>(null);
@@ -124,6 +130,12 @@ export default function WarehousesPage() {
         </Button>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Ombor nomi yoki manzili bo'yicha qidirish..."
+      />
+
       {isLoading ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Skeleton className="h-32" />
@@ -142,8 +154,9 @@ export default function WarehousesPage() {
           </CardContent>
         </Card>
       ) : (
+        <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {warehouses.map((w) => {
+          {view.pageItems.map((w) => {
             const summary = summaryFor(w.id);
             return (
               <Card
@@ -204,6 +217,14 @@ export default function WarehousesPage() {
             );
           })}
         </div>
+        <TablePagination
+          page={view.page}
+          totalPages={view.totalPages}
+          total={view.total}
+          pageSize={view.pageSize}
+          onPageChange={view.setPage}
+        />
+        </>
       )}
 
       <WarehouseFormDialog warehouse={editing} open={formOpen} onOpenChange={setFormOpen} />

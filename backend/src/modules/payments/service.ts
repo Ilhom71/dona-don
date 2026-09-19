@@ -19,6 +19,17 @@ export async function createPayment(input: CreatePaymentInput) {
   const amountUzs = input.currency === "USD" ? input.amount * rate : input.amount;
 
   return db.transaction(async (tx) => {
+    // Savdoga bog'langan to'lovni yozishdan OLDIN savdoni qulflab tekshiramiz:
+    // bekor qilingan savdoga to'lov qo'shilsa uning "cancelled" holati
+    // "paid"/"partial"ga o'tib ketardi, boshqa hamkorning savdosiga yozilsa
+    // qarz noto'g'ri hamkordan yechilardi.
+    if (input.saleId) {
+      const [target] = await tx.select().from(sales).where(eq(sales.id, input.saleId)).for("update");
+      if (!target) throw new Error("Savdo topilmadi");
+      if (target.cancelledAt) throw new Error("Bekor qilingan savdoga to'lov qo'shib bo'lmaydi");
+      if (target.partnerId !== input.partnerId) throw new Error("Bu savdo tanlangan hamkorga tegishli emas");
+    }
+
     const [payment] = await tx
       .insert(payments)
       .values({
@@ -102,6 +113,7 @@ export async function restorePayment(id: string) {
   return db.transaction(async (tx) => {
     const [existing] = await tx.select().from(payments).where(eq(payments.id, id));
     if (!existing) throw new Error("To'lov topilmadi");
+    if (!existing.cancelledAt) throw new Error("Bu to'lov bekor qilinmagan - tiklash shart emas");
 
     const [payment] = await tx
       .update(payments)

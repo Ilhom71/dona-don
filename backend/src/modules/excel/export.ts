@@ -4,7 +4,7 @@ import { db } from "../../db";
 import { products } from "../../db/schema";
 import { listSales } from "../sales/service";
 import { listPurchases } from "../purchases/service";
-import { getPartner, getPartnerLedger } from "../partners/service";
+import { getPartner, getPartnerLedger, listPartnersWithBalance } from "../partners/service";
 import { getCashLedger } from "../cash/service";
 
 const HEADER_FILL: ExcelJS.Fill = {
@@ -123,7 +123,9 @@ const SALE_STATUS_LABELS: Record<string, string> = {
 /** `ids` berilsa, faqat o'sha savdolarni (masalan savdo tarixida belgilanganlarni) chiqaradi. */
 export async function exportSales(ids?: string[]) {
   const allRows = await listSales({});
-  const rows = ids ? allRows.filter((r) => ids.includes(r.id)) : allRows;
+  // Bekor qilingan (arxivdagi) savdolar eksportga kirmaydi - ro'yxat va jamiga ham.
+  const activeRows = allRows.filter((r) => !r.cancelledAt && r.paymentStatus !== "cancelled");
+  const rows = ids ? activeRows.filter((r) => ids.includes(r.id)) : activeRows;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Savdolar");
   ws.columns = [
@@ -185,7 +187,9 @@ export async function exportSales(ids?: string[]) {
 /** `ids` berilsa, faqat o'sha xaridlarni chiqaradi. */
 export async function exportPurchases(ids?: string[]) {
   const allRows = await listPurchases({});
-  const rows = ids ? allRows.filter((r) => ids.includes(r.id)) : allRows;
+  // Bekor qilingan xaridlar eksportga kirmaydi.
+  const activeRows = allRows.filter((r) => !r.cancelledAt && r.paymentStatus !== "cancelled");
+  const rows = ids ? activeRows.filter((r) => ids.includes(r.id)) : activeRows;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Xaridlar");
   ws.columns = [
@@ -245,7 +249,9 @@ export async function exportPurchases(ids?: string[]) {
 }
 
 export async function exportStockMovements() {
+  // Bekor qilingan (arxivdagi) yozuvlar eksportga kirmaydi.
   const rows = await db.query.stockMovements.findMany({
+    where: (t, { isNull }) => isNull(t.cancelledAt),
     with: { product: true, partner: true, warehouse: true },
     orderBy: (t, { desc }) => desc(t.movementDate),
   });
@@ -383,10 +389,23 @@ export async function exportPartnerStatement(partnerId: string) {
 }
 
 const CASH_DIRECTION_LABELS: Record<string, string> = { in: "Kirim", out: "Chiqim" };
+const CASH_METHOD_LABELS: Record<string, string> = { cash: "Naqd", card: "Karta", bank: "Bank o'tkazmasi" };
+const CASH_CATEGORY_LABELS: Record<string, string> = {
+  sale_payment: "Mijozdan to'lov",
+  supplier_payment: "Yetkazib beruvchiga to'lov",
+  salary: "Ish haqi",
+  rent: "Ijara",
+  transport: "Transport",
+  utilities: "Kommunal xizmatlar",
+  other: "Boshqa",
+  manual: "Qo'lda kiritilgan",
+};
 
 /** Kassaning to'liq harakati (mijozdan to'lov + xarajatlar + qo'lda yozuvlar), yuguruvchi qoldiq bilan. */
 export async function exportCashLedger() {
-  const rows = await getCashLedger();
+  // Bekor qilingan (arxivdagi) yozuvlar eksportga umuman kirmaydi. Qoldiq
+  // ustuni getCashLedger'dan tayyor keladi (bekor qilinganlar unga qo'shilmagan).
+  const rows = (await getCashLedger()).filter((r) => !r.cancelled);
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Kassa");
   ws.columns = [
@@ -397,37 +416,34 @@ export async function exportCashLedger() {
     { header: "Hamkor", key: "partner", width: 22 },
     { header: "Usuli", key: "method", width: 12 },
     { header: "Tavsif", key: "description", width: 30 },
-    { header: "Summa (so'm)", key: "amountUzs", width: 16 },
+    { header: "Kirim (so'm)", key: "inUzs", width: 16 },
+    { header: "Chiqim (so'm)", key: "outUzs", width: 16 },
     { header: "Qoldiq (so'm)", key: "balanceUzs", width: 16 },
-    { header: "Holati", key: "status", width: 16 },
   ];
 
   let totalIn = 0;
   let totalOut = 0;
   rows.forEach((r, i) => {
-    // Bekor qilingan yozuvlar jami hisob-kitobga kirmaydi (getCashLedger'dagi
-    // balanceUzs mantiqiga mos).
-    if (!r.cancelled) {
-      if (r.direction === "in") totalIn += r.amountUzs;
-      else totalOut += r.amountUzs;
-    }
+    if (r.direction === "in") totalIn += r.amountUzs;
+    else totalOut += r.amountUzs;
     const row = ws.addRow({
       no: i + 1,
       date: new Date(r.date).toISOString().slice(0, 16).replace("T", " "),
       direction: CASH_DIRECTION_LABELS[r.direction] ?? r.direction,
-      category: r.category,
+      category: CASH_CATEGORY_LABELS[r.category] ?? r.category,
       partner: r.partnerName ?? "",
-      method: r.method,
+      method: CASH_METHOD_LABELS[r.method] ?? r.method,
       description: r.description,
-      amountUzs: r.direction === "in" ? r.amountUzs : -r.amountUzs,
+      inUzs: r.direction === "in" ? r.amountUzs : null,
+      outUzs: r.direction === "out" ? r.amountUzs : null,
       balanceUzs: r.balanceUzs,
-      status: r.cancelled ? "Bekor qilingan" : "",
     });
-    ["H", "I"].forEach((col) => (row.getCell(col).numFmt = "#,##0"));
+    ["H", "I", "J"].forEach((col) => (row.getCell(col).numFmt = "#,##0"));
   });
 
   styleSheet(ws, "Kassa");
   styleDataRows(ws, 3, ws.rowCount);
+  // Jami qator: kirim va chiqim ustunlari alohida yig'iladi, oxirgi qoldiq - hozirgi qoldiq.
   const totalsRow2 = addTotalsRow(ws, [
     "",
     "Jami",
@@ -436,11 +452,11 @@ export async function exportCashLedger() {
     "",
     "",
     "",
-    totalIn - totalOut,
+    totalIn,
+    totalOut,
     rows.at(-1)?.balanceUzs ?? 0,
   ]);
-  totalsRow2.getCell(8).numFmt = "#,##0";
-  totalsRow2.getCell(9).numFmt = "#,##0";
+  [8, 9, 10].forEach((c) => (totalsRow2.getCell(c).numFmt = "#,##0"));
   return toBuffer(wb);
 }
 
@@ -488,5 +504,62 @@ export async function exportExpensesTemplate() {
   });
   styleSheet(ws, "Xarajatlar - import shabloni");
   styleDataRows(ws, 3, ws.rowCount);
+  return toBuffer(wb);
+}
+
+const PARTNER_TYPE_LABELS: Record<string, string> = {
+  customer: "Mijoz",
+  supplier: "Yetkazib beruvchi",
+  both: "Mijoz va yetkazib beruvchi",
+};
+
+/**
+ * Hamkorlar (mijozlar/yetkazib beruvchilar) ro'yxati balanslari bilan.
+ * Arxivlangan hamkorlar kirmaydi (listPartnersWithBalance ularni chiqarmaydi). Balans: musbat - hamkor bizga qarzdor
+ * ("Menda qarzdorlar"), manfiy - biz hamkorga qarzdormiz ("Qarzlarim").
+ */
+export async function exportPartners() {
+  const rows = await listPartnersWithBalance();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Hamkorlar");
+  ws.columns = [
+    { header: "№", key: "no", width: 5 },
+    { header: "Ismi / nomi", key: "name", width: 28 },
+    { header: "Turi", key: "type", width: 24 },
+    { header: "Telefon", key: "phone", width: 16 },
+    { header: "Manzil", key: "address", width: 26 },
+    { header: "Bank hisob raqami", key: "bankAccount", width: 24 },
+    { header: "Menda qarzdor (so'm)", key: "owedToMe", width: 20 },
+    { header: "Men qarzdorman (so'm)", key: "iOwe", width: 22 },
+    { header: "Balans (so'm)", key: "balance", width: 18 },
+  ];
+
+  let totalOwedToMe = 0;
+  let totalIOwe = 0;
+  let totalBalance = 0;
+  rows.forEach((p, i) => {
+    const owedToMe = Math.max(0, p.balanceUzs);
+    const iOwe = Math.max(0, -p.balanceUzs);
+    totalOwedToMe += owedToMe;
+    totalIOwe += iOwe;
+    totalBalance += p.balanceUzs;
+    const row = ws.addRow({
+      no: i + 1,
+      name: p.name,
+      type: PARTNER_TYPE_LABELS[p.type] ?? p.type,
+      phone: p.phone ?? "",
+      address: p.address ?? "",
+      bankAccount: p.bankAccount ?? "",
+      owedToMe: owedToMe || null,
+      iOwe: iOwe || null,
+      balance: p.balanceUzs,
+    });
+    ["G", "H", "I"].forEach((col) => (row.getCell(col).numFmt = "#,##0"));
+  });
+
+  styleSheet(ws, "Hamkorlar");
+  styleDataRows(ws, 3, ws.rowCount);
+  const totalsRow = addTotalsRow(ws, ["", "Jami", "", "", "", "", totalOwedToMe, totalIOwe, totalBalance]);
+  [7, 8, 9].forEach((c) => (totalsRow.getCell(c).numFmt = "#,##0"));
   return toBuffer(wb);
 }

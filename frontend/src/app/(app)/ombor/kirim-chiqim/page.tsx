@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -37,6 +38,8 @@ import {
 import { MovementFormDialog } from "@/components/movement-form-dialog";
 import { TransferFormDialog } from "@/components/transfer-form-dialog";
 import { ExcelActions } from "@/components/excel-actions";
+import { TablePagination, TableSearch } from "@/components/table-controls";
+import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { StockMovement, Product, Warehouse } from "@/lib/types";
 import { formatDateTime, formatMoney, formatQuantity, movementTypeLabels } from "@/lib/format";
@@ -112,12 +115,30 @@ export default function StockMovementsPage() {
   });
   // Bekor qilingan yozuvlar bu ro'yxatda ko'rinmaydi - Arxivning "Bekor
   // qilingan ombor amaliyotlari" qismida ko'rinadi.
-  const visibleData = (data ?? []).filter((m) => !m.cancelled);
+  const visibleData = useMemo(() => (data ?? []).filter((m) => !m.cancelled), [data]);
 
   const productName = (id: string) => products?.find((p) => p.id === id)?.name ?? "-";
   const productUnit = (id: string) => products?.find((p) => p.id === id)?.unit ?? "kg";
   const warehouseName = (id: string | null) =>
     id ? warehouses?.find((w) => w.id === id)?.name ?? "-" : "-";
+
+  const view = useTableView(
+    visibleData,
+    (m) =>
+      `${productName(m.productId)} ${warehouseName(m.warehouseId)} ${m.vehicleNumber ?? ""} ${m.note ?? ""} ${movementTypeLabels[m.type]}`
+  );
+  // Jami qator (qidiruvdan o'tgan barcha qatorlar): miqdor kg'da (1 t = 1000 kg),
+  // summa esa valyuta bo'yicha alohida (UZS va USD aralashtirilmaydi).
+  const qtyKg = (m: StockMovement) =>
+    Number(m.quantity) * (productUnit(m.productId) === "ton" ? 1000 : 1);
+  const totalInKg = view.filtered.filter((m) => m.type === "in").reduce((s, m) => s + qtyKg(m), 0);
+  const totalOutKg = view.filtered.filter((m) => m.type === "out").reduce((s, m) => s + qtyKg(m), 0);
+  const sumByCurrency = (cur: "UZS" | "USD") =>
+    view.filtered
+      .filter((m) => m.pricePerUnit && m.currency === cur)
+      .reduce((s, m) => s + Number(m.quantity) * Number(m.pricePerUnit), 0);
+  const totalUzs = sumByCurrency("UZS");
+  const totalUsd = sumByCurrency("USD");
 
   return (
     <div className="space-y-4">
@@ -207,6 +228,12 @@ export default function StockMovementsPage() {
         </Select>
       </div>
 
+      <TableSearch
+        value={view.query}
+        onChange={view.setQuery}
+        placeholder="Mahsulot, ombor, mashina yoki izoh bo'yicha qidirish..."
+      />
+
       {isLoading ? (
         <Skeleton className="h-64" />
       ) : visibleData.length === 0 ? (
@@ -234,7 +261,7 @@ export default function StockMovementsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleData.map((m) => (
+                {view.pageItems.map((m) => (
                   <TableRow key={m.id}>
                     <TableCell>{formatDateTime(m.movementDate)}</TableCell>
                     <TableCell>
@@ -283,11 +310,26 @@ export default function StockMovementsPage() {
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={5}>Jami ({view.total} ta)</TableCell>
+                  <TableCell>
+                    <p>Kirim: {formatQuantity(totalInKg, "kg")}</p>
+                    <p>Chiqim: {formatQuantity(totalOutKg, "kg")}</p>
+                  </TableCell>
+                  <TableCell />
+                  <TableCell className="text-right">
+                    {totalUzs > 0 && <p>{formatMoney(totalUzs)}</p>}
+                    {totalUsd > 0 && <p>{formatMoney(totalUsd, "USD")}</p>}
+                  </TableCell>
+                  <TableCell colSpan={2} />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Card>
 
           <div className="space-y-3 md:hidden">
-            {visibleData.map((m) => (
+            {view.pageItems.map((m) => (
               <Card key={m.id}>
                 <CardContent className="space-y-1 py-3">
                   <div className="flex items-center justify-between">
@@ -328,7 +370,25 @@ export default function StockMovementsPage() {
                 </CardContent>
               </Card>
             ))}
+            <div className="space-y-1 rounded-md border bg-muted p-3 text-sm font-semibold">
+              <p className="flex justify-between">
+                <span>Jami kirim ({view.total} ta)</span>
+                <span>{formatQuantity(totalInKg, "kg")}</span>
+              </p>
+              <p className="flex justify-between">
+                <span>Jami chiqim</span>
+                <span>{formatQuantity(totalOutKg, "kg")}</span>
+              </p>
+            </div>
           </div>
+
+          <TablePagination
+            page={view.page}
+            totalPages={view.totalPages}
+            total={view.total}
+            pageSize={view.pageSize}
+            onPageChange={view.setPage}
+          />
         </>
       )}
 

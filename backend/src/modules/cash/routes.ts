@@ -1,14 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { db } from "../../db";
 import {
   getCashLedger,
   getCashSummary,
-  getAccountingLedger,
-  getAccountingSummary,
   createCashTransaction,
-  transferToAccounting,
-  withdrawFromAccounting,
   cancelCashTransaction,
   restoreCashTransaction,
 } from "./service";
@@ -19,16 +14,6 @@ const cashTransactionSchema = z.object({
   amountUzs: z.number().positive("Summa musbat bo'lishi kerak"),
   note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
   partnerId: z.string().uuid().nullable().optional(),
-  method: z.enum(["cash", "card", "bank"]).optional(),
-  bankAccount: z.string().nullable().optional(),
-});
-
-const accountingTransferSchema = z.object({
-  amountUzs: z.number().positive("Summa musbat bo'lishi kerak"),
-  note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
-});
-
-const accountingWithdrawSchema = accountingTransferSchema.extend({
   method: z.enum(["cash", "card", "bank"]).optional(),
   bankAccount: z.string().nullable().optional(),
 });
@@ -87,44 +72,4 @@ cashRoutes.post("/transactions/:id/restore", async (c) => {
   } catch (err) {
     return c.json({ error: (err as Error).message }, 404);
   }
-});
-
-// ---------- Buxgalteriya (joriy hisob) ----------
-
-cashRoutes.get("/accounting/ledger", async (c) => {
-  const { from, to } = c.req.query();
-  const rows = await getAccountingLedger({
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
-  });
-  return c.json(rows);
-});
-
-cashRoutes.get("/accounting/summary", async (c) => {
-  const { from, to } = c.req.query();
-  const summary = await getAccountingSummary({
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
-  });
-  return c.json(summary);
-});
-
-cashRoutes.post("/accounting/transfer-in", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsed = accountingTransferSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
-  }
-  const row = await db.transaction((tx) => transferToAccounting(tx, parsed.data));
-  return c.json(row, 201);
-});
-
-cashRoutes.post("/accounting/withdraw", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsed = accountingWithdrawSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
-  }
-  const row = await withdrawFromAccounting(parsed.data);
-  return c.json(row, 201);
 });

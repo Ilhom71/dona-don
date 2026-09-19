@@ -30,8 +30,13 @@ paymentRoutes.post("/", async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.issues[0]?.message ?? "Xato ma'lumot" }, 400);
   }
-  const payment = await createPayment(parsed.data);
-  return c.json(payment, 201);
+  try {
+    const payment = await createPayment(parsed.data);
+    return c.json(payment, 201);
+  } catch (err) {
+    // Biznes qoidasi xatolari (masalan bekor qilingan savdoga to'lov) - 400 va o'zbekcha xabar.
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 paymentRoutes.post("/:id/cancel", async (c) => {
