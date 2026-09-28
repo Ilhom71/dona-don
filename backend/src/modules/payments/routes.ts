@@ -11,6 +11,8 @@ const paymentSchema = z.object({
   method: z.enum(["cash", "card", "bank"]).optional(),
   notes: z.string().nullable().optional(),
   paymentDate: z.coerce.date().optional(),
+  // true = ortiqcha to'lovga (avans) ruxsat
+  allowOverpay: z.boolean().optional(),
 });
 
 const cancelSchema = z.object({ reason: z.string().nullable().optional() });

@@ -3,6 +3,12 @@ import { db } from "../../db";
 import { products, productStock, warehouses, sales, saleItems, payments, expenses } from "../../db/schema";
 import { listPartnersWithBalance } from "../partners/service";
 
+// Timestamps are stored in UTC (timestamp without time zone); business days are
+// Asia/Tashkent days. These fragments convert a stored column to Tashkent local time.
+const TZ_LOCAL = (col: unknown) => sql`(${col} at time zone 'UTC' at time zone 'Asia/Tashkent')`;
+// Current Tashkent local timestamp (replaces current_date, which follows the DB server zone).
+const TASHKENT_NOW = sql`(now() at time zone 'Asia/Tashkent')`;
+
 /** Bosh sahifa (dashboard) uchun umumiy ko'rsatkichlar. */
 export async function getDashboardSummary() {
   // `product_stock`dan to'g'ridan-to'g'ri hisoblanadi (products.stockQuantity/
@@ -26,13 +32,13 @@ export async function getDashboardSummary() {
   const [today] = await db
     .select({ total: sql<string>`coalesce(sum(${sales.totalAmountUzs}), 0)`, count: sql<string>`count(*)` })
     .from(sales)
-    .where(sql`${sales.saleDate}::date = current_date and ${sales.cancelledAt} is null`);
+    .where(sql`${TZ_LOCAL(sales.saleDate)}::date = ${TASHKENT_NOW}::date and ${sales.cancelledAt} is null`);
 
   const [month] = await db
     .select({ total: sql<string>`coalesce(sum(${sales.totalAmountUzs}), 0)`, count: sql<string>`count(*)` })
     .from(sales)
     .where(
-      sql`date_trunc('month', ${sales.saleDate}) = date_trunc('month', current_date) and ${sales.cancelledAt} is null`
+      sql`date_trunc('month', ${TZ_LOCAL(sales.saleDate)}) = date_trunc('month', ${TASHKENT_NOW}) and ${sales.cancelledAt} is null`
     );
 
   const [monthProfit] = await db
@@ -45,7 +51,7 @@ export async function getDashboardSummary() {
     .from(saleItems)
     .innerJoin(sales, sql`${saleItems.saleId} = ${sales.id}`)
     .where(
-      sql`date_trunc('month', ${sales.saleDate}) = date_trunc('month', current_date) and ${sales.cancelledAt} is null`
+      sql`date_trunc('month', ${TZ_LOCAL(sales.saleDate)}) = date_trunc('month', ${TASHKENT_NOW}) and ${sales.cancelledAt} is null`
     );
 
   // Hamkorlar sahifasidagi bilan **bir xil** manba (listPartnersWithBalance)
@@ -106,18 +112,17 @@ export async function getDashboardSummary() {
   };
 }
 
+
 /**
- * Buxgalteriya hisoboti: berilgan davr uchun daromad (savdo), tannarx, yalpi
- * va sof foyda, xarajatlar (kategoriya bo'yicha) va naqd pul oqimi. Bekor
- * qilingan (storno) savdolar hisobga kirmaydi. Qarzdorlik esa davrga bog'liq
- * emas - har doim "hozirgi holat" sifatida qaytariladi.
+ * Totals used for both the current and the previous comparison period:
+ * revenue (incl. freight), COGS, freight, expenses by category (supplier
+ * payments excluded - see below) and the resulting profit. Freight money
+ * belongs to us, so it stays inside revenue and does not change profit;
+ * it is reported separately only for information.
  */
-export async function getAccountingReport(from: Date, to: Date) {
-  // Muhim: sana oralig'ini solishtirishda drizzle'ning tipdagi `gte`/`lte`
-  // funksiyalari ishlatiladi (raw `sql` shablon ichiga Date obyektini
-  // to'g'ridan-to'g'ri qo'yish emas) - aks holda postgres drayveri "Date"
-  // qiymatini параметр sifatida to'g'ri serializatsiya qila olmay, so'rov
-  // xato bilan tugaydi (bu funksiya oldin shu sababdan doim 500 qaytargan).
+async function computePeriodTotals(from: Date, to: Date) {
+  // Note: date ranges use drizzle's typed gte/lte (not a Date inside a raw
+  // sql template), otherwise the postgres driver cannot serialize the param.
   const [revenue] = await db
     .select({
       revenueUzs: sql<string>`coalesce(sum(${sales.totalAmountUzs}), 0)`,
@@ -135,13 +140,8 @@ export async function getAccountingReport(from: Date, to: Date) {
     .innerJoin(sales, eq(saleItems.saleId, sales.id))
     .where(and(gte(sales.saleDate, from), lte(sales.saleDate, to), isNull(sales.cancelledAt)));
 
-  // "Yetkazib beruvchiga to'lov" (supplier_payment) kategoriyasi bu yerda
-  // **chiqarib tashlanadi** - u haqiqiy "xarajat" emas, xarid uchun to'lov
-  // (aktiv - naqd pul omborga aylanadi). Uning tannarxi allaqachon yuqoridagi
-  // COGS'ga (costPriceUzsSnapshot) sotilgan paytda kiritiladi - agar bu yerda
-  // ham "xarajat" sifatida ayirilsa, tannarx ikki marta hisoblanib, sof foyda
-  // sun'iy ravishda kamayib ketardi (haqiqiy xarajatlarsiz ham "zarar"
-  // ko'rsatib turishi mumkin edi).
+  // "Yetkazib beruvchiga to'lov" (supplier_payment) is excluded here: it is a
+  // purchase payment, not an expense (its cost already enters COGS when sold).
   const expenseRows = await db
     .select({
       category: expenses.category,
@@ -158,14 +158,44 @@ export async function getAccountingReport(from: Date, to: Date) {
     )
     .groupBy(expenses.category);
 
+  const revenueUzs = Number(revenue?.revenueUzs ?? 0);
+  const cogsUzs = Number(cogs?.cogsUzs ?? 0);
+  const expensesUzs = expenseRows.reduce((sum, r) => sum + Number(r.totalUzs), 0);
+  const grossProfitUzs = revenueUzs - cogsUzs;
+  return {
+    revenueUzs,
+    saleCount: Number(revenue?.saleCount ?? 0),
+    cogsUzs,
+    freightUzs: Number(cogs?.freightUzs ?? 0),
+    grossProfitUzs,
+    expensesUzs,
+    expenseRows,
+    netProfitUzs: grossProfitUzs - expensesUzs,
+  };
+}
+
+/**
+ * Buxgalteriya hisoboti: berilgan davr uchun daromad (savdo, yuk puli bilan),
+ * tannarx, yalpi va sof foyda, xarajatlar (kategoriya bo'yicha) va naqd pul
+ * oqimi. Bekor qilingan (storno) savdolar hisobga kirmaydi. Qarzdorlik esa
+ * davrga bog'liq emas - har doim "hozirgi holat" sifatida qaytariladi.
+ * `previous` - oldingi teng uzunlikdagi davr bilan solishtirish uchun.
+ */
+export async function getAccountingReport(from: Date, to: Date) {
+  const current = await computePeriodTotals(from, to);
+
+  // Previous period of the same length, ending right before `from`.
+  const spanMs = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - spanMs);
+  const prev = await computePeriodTotals(prevFrom, prevTo);
+
   const [cashIn] = await db
     .select({ total: sql<string>`coalesce(sum(${payments.amountUzs}), 0)` })
     .from(payments)
     .where(and(gte(payments.paymentDate, from), lte(payments.paymentDate, to), isNull(payments.cancelledAt)));
 
-  // Naqd pul oqimi (cash flow) uchun esa yetkazib beruvchiga to'lov HAM
-  // hisobga olinadi - bu haqiqiy pul chiqimi, garchi sof foydani kamaytiruvchi
-  // "xarajat" sifatida hisoblanmasa ham (yuqoridagi izohga qarang).
+  // Cash flow includes supplier payments too - it is real money going out.
   const [allExpensesCash] = await db
     .select({ total: sql<string>`coalesce(sum(${expenses.amountUzs}), 0)` })
     .from(expenses)
@@ -173,58 +203,116 @@ export async function getAccountingReport(from: Date, to: Date) {
       and(gte(expenses.expenseDate, from), lte(expenses.expenseDate, to), isNull(expenses.cancelledAt))
     );
 
-  // Hamkorlar sahifasi bilan bir xil manba (listPartnersWithBalance) - Kassa
-  // orqali qo'lda kiritilgan hamkor to'lovlarini ham hisobga oladi, davrga
-  // bog'liq emas (har doim "hozirgi holat").
+  // Same source as the Partners page (listPartnersWithBalance); not period-bound.
   const partnersForReceivables = await listPartnersWithBalance();
   const receivablesUzs = partnersForReceivables.reduce(
     (sum, p) => sum + Math.max(0, p.balanceUzs),
     0
   );
 
-  const revenueUzs = Number(revenue?.revenueUzs ?? 0);
-  const cogsUzs = Number(cogs?.cogsUzs ?? 0);
-  const grossProfitUzs = revenueUzs - cogsUzs;
-  const expensesUzs = expenseRows.reduce((sum, r) => sum + Number(r.totalUzs), 0);
-  const netProfitUzs = grossProfitUzs - expensesUzs;
   const cashInUzs = Number(cashIn?.total ?? 0);
   const cashOutUzs = Number(allExpensesCash?.total ?? 0);
 
   return {
     from: from.toISOString(),
     to: to.toISOString(),
-    revenueUzs,
-    saleCount: Number(revenue?.saleCount ?? 0),
-    cogsUzs,
-    freightUzs: Number(cogs?.freightUzs ?? 0),
-    grossProfitUzs,
-    expensesUzs,
-    expensesByCategory: expenseRows.map((r) => ({
+    revenueUzs: current.revenueUzs,
+    saleCount: current.saleCount,
+    cogsUzs: current.cogsUzs,
+    // Freight is part of revenue (our money); shown separately for information.
+    freightUzs: current.freightUzs,
+    grossProfitUzs: current.grossProfitUzs,
+    expensesUzs: current.expensesUzs,
+    expensesByCategory: current.expenseRows.map((r) => ({
       category: r.category,
       totalUzs: Number(r.totalUzs),
     })),
-    netProfitUzs,
+    netProfitUzs: current.netProfitUzs,
     cashInUzs,
     cashOutUzs,
     netCashFlowUzs: cashInUzs - cashOutUzs,
     receivablesUzs,
+    previous: {
+      from: prevFrom.toISOString(),
+      to: prevTo.toISOString(),
+      revenueUzs: prev.revenueUzs,
+      cogsUzs: prev.cogsUzs,
+      expensesUzs: prev.expensesUzs,
+      netProfitUzs: prev.netProfitUzs,
+    },
   };
 }
 
-/** Berilgan davr uchun kunlar bo'yicha savdo va daromad hisoboti. */
-export async function getProfitReport(from: Date, to: Date) {
-  return db
+/**
+ * Profit report grouped by Tashkent day (or month). Sales, sale items and
+ * expenses are aggregated in SEPARATE queries and merged in JS - joining
+ * sales to sale_items would repeat each sale's total once per item and
+ * double count revenue. profit = sales - cogs - expenses (freight is our
+ * money, so it is not subtracted). Only periods with any activity are returned.
+ */
+export async function getProfitReport(from: Date, to: Date, groupBy: "day" | "month" = "day") {
+  // sql.raw for the format literal: a bound parameter would make the SELECT and
+  // GROUP BY expressions differ for postgres.
+  const fmt = sql.raw(groupBy === "month" ? "'YYYY-MM'" : "'YYYY-MM-DD'");
+  const bucket = (col: unknown) => sql<string>`to_char(${TZ_LOCAL(col)}, ${fmt})`;
+
+  const salesRows = await db
     .select({
-      day: sql<string>`date(${sales.saleDate})`,
-      salesUzs: sql<string>`sum(${sales.totalAmountUzs})`,
-      profitUzs: sql<string>`sum(
-        (case when ${sales.currency} = 'USD' then ${saleItems.unitPrice} * ${sales.exchangeRateSnapshot} else ${saleItems.unitPrice} end
-          - ${saleItems.costPriceUzsSnapshot}) * ${saleItems.quantity}
-      )`,
+      day: bucket(sales.saleDate),
+      salesUzs: sql<string>`coalesce(sum(${sales.totalAmountUzs}), 0)`,
+    })
+    .from(sales)
+    .where(and(gte(sales.saleDate, from), lte(sales.saleDate, to), isNull(sales.cancelledAt)))
+    .groupBy(bucket(sales.saleDate));
+
+  const itemRows = await db
+    .select({
+      day: bucket(sales.saleDate),
+      cogsUzs: sql<string>`coalesce(sum(${saleItems.costPriceUzsSnapshot} * ${saleItems.quantity}), 0)`,
+      freightUzs: sql<string>`coalesce(sum(${saleItems.freightCostUzs}), 0)`,
     })
     .from(saleItems)
     .innerJoin(sales, eq(saleItems.saleId, sales.id))
     .where(and(gte(sales.saleDate, from), lte(sales.saleDate, to), isNull(sales.cancelledAt)))
-    .groupBy(sql`date(${sales.saleDate})`)
-    .orderBy(sql`date(${sales.saleDate})`);
+    .groupBy(bucket(sales.saleDate));
+
+  const expenseRows = await db
+    .select({
+      day: bucket(expenses.expenseDate),
+      expensesUzs: sql<string>`coalesce(sum(${expenses.amountUzs}), 0)`,
+    })
+    .from(expenses)
+    .where(
+      and(
+        gte(expenses.expenseDate, from),
+        lte(expenses.expenseDate, to),
+        isNull(expenses.cancelledAt),
+        ne(expenses.category, "supplier_payment")
+      )
+    )
+    .groupBy(bucket(expenses.expenseDate));
+
+  const byDay = new Map<
+    string,
+    { day: string; salesUzs: number; cogsUzs: number; freightUzs: number; expensesUzs: number; profitUzs: number }
+  >();
+  const slot = (day: string) => {
+    let row = byDay.get(day);
+    if (!row) {
+      row = { day, salesUzs: 0, cogsUzs: 0, freightUzs: 0, expensesUzs: 0, profitUzs: 0 };
+      byDay.set(day, row);
+    }
+    return row;
+  };
+  for (const r of salesRows) slot(r.day).salesUzs = Number(r.salesUzs);
+  for (const r of itemRows) {
+    const row = slot(r.day);
+    row.cogsUzs = Number(r.cogsUzs);
+    row.freightUzs = Number(r.freightUzs);
+  }
+  for (const r of expenseRows) slot(r.day).expensesUzs = Number(r.expensesUzs);
+
+  return [...byDay.values()]
+    .map((r) => ({ ...r, profitUzs: r.salesUzs - r.cogsUzs - r.expensesUzs }))
+    .sort((a, b) => a.day.localeCompare(b.day));
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "cash_transactions" ADD COLUMN "affects_partner_balance" boolean DEFAULT true NOT NULL;

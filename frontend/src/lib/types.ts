@@ -240,41 +240,32 @@ export type CashLedgerRow = {
   source: "payment" | "expense" | "manual";
   // kirim uchun har doim "sale_payment", chiqim uchun expense kategoriyasi
   category: string;
+  partnerId: string | null;
   partnerName: string | null;
   method: string;
   bankAccount: string | null;
   description: string;
   amountUzs: number;
   cancelled: boolean;
+  // Qo'lda kiritilgan yozuv hamkor qarziga ta'sir qiladimi (boshqa manbalarda doim true)
+  affectsPartnerBalance: boolean;
+  // Qo'lda kiritilgan yozuvlar uchun: "funding" = "Pul olib turish"
+  // (kassani to'ldirish uchun kiritilgan pul), payment/expense qatorlarida null.
+  purpose: "regular" | "funding" | null;
   balanceUzs: number;
 };
+
+// /cash/ledger `kind` filtri: kirim / chiqim / qaytmas chiqim (xarajat)
+export type CashRowKind = "in" | "out" | "non_returnable";
 
 export type CashSummary = {
   currentBalanceUzs: number;
   periodInUzs: number;
   periodOutUzs: number;
-};
-
-export type DayClosing = {
-  id: string;
-  closingDate: string;
-  kassaBalanceUzs: string;
-  warehouseStockValueUzs: string;
-  todaySalesUzs: string;
-  periodInUzs: string;
-  periodOutUzs: string;
-  note: string | null;
-  closedAt: string;
-};
-
-export type DayStatus = {
-  date: string;
-  opened: boolean;
-  closed: boolean;
-  // Savdo qilish mumkinmi - opened && !closed.
-  canSell: boolean;
-  openedAt: string | null;
-  closedAt: string | null;
+  totalExpensesUzs: number;
+  // Hali qaytarilmagan "Pul olib turish" summasi - faqat ma'lumot uchun,
+  // currentBalanceUzs hisobiga allaqachon kiradi.
+  fundingBalanceUzs: number;
 };
 
 export type AccountingReport = {
@@ -292,6 +283,25 @@ export type AccountingReport = {
   cashOutUzs: number;
   netCashFlowUzs: number;
   receivablesUzs: number;
+  // Oldingi teng uzunlikdagi davr (solishtirish uchun)
+  previous: {
+    from: string;
+    to: string;
+    revenueUzs: number;
+    cogsUzs: number;
+    expensesUzs: number;
+    netProfitUzs: number;
+  };
+};
+
+// GET /reports/profit - kunlik (YYYY-MM-DD) yoki oylik (YYYY-MM) nuqtalar
+export type ProfitPoint = {
+  day: string;
+  salesUzs: number;
+  cogsUzs: number;
+  freightUzs: number;
+  expensesUzs: number;
+  profitUzs: number;
 };
 
 export type DashboardSummary = {
@@ -304,4 +314,65 @@ export type DashboardSummary = {
   monthProfitUzs: number;
   totalDebtUzs: number;
   lowStockProducts: Product[];
+};
+
+// ---------- SMS (TextUP orqali hamkorlarga xabar yuborish) ----------
+
+export type SmsStatus = "sent" | "failed";
+
+// GET /sms/logs qatori - har biri BITTA hamkorga BITTA yuborish urinishi.
+export type SmsLog = {
+  id: string;
+  partnerId: string | null;
+  partnerName: string;
+  phone: string;
+  message: string;
+  templateId: string | null;
+  status: SmsStatus;
+  textupSmsId: string | null;
+  errorMessage: string | null;
+  sentAt: string;
+};
+
+// POST /sms/send javobi
+export type SendSmsResultRow = {
+  partnerId: string;
+  partnerName: string;
+  ok: boolean;
+  error?: string;
+};
+
+export type SendSmsResponse = {
+  results: SendSmsResultRow[];
+};
+
+// GET /sms/stats
+export type SmsStats = {
+  sentThisMonth: number;
+};
+
+// GET /sms/balance - ichki SMS balansi (oddiy foydalanuvchi ham ko'radi)
+export type SmsBalance = {
+  balance: number;
+};
+
+// ---------- SMS Admin (SMS bo'limi ichidagi, asosiy admindan mustaqil bo'lim) ----------
+
+export type SmsCreditType = "topup" | "usage" | "refund";
+
+export type SmsCreditEntry = {
+  id: string;
+  type: SmsCreditType;
+  amount: number;
+  pricePerSmsUzs: string | null;
+  totalUzs: string | null;
+  note: string | null;
+  createdAt: string;
+};
+
+// GET /sms-admin/credits
+export type SmsCreditsResponse = {
+  balance: number;
+  priceUzs: number;
+  history: SmsCreditEntry[];
 };

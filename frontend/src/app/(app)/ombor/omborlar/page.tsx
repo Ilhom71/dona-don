@@ -33,7 +33,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { WarehouseFormDialog } from "@/components/warehouse-form-dialog";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { StockAdjustmentDialog } from "@/components/stock-adjustment-dialog";
 import { api, ApiError } from "@/lib/api";
@@ -64,7 +69,11 @@ export default function WarehousesPage() {
 
   // Ombor kartalari uchun qidiruv + sahifalash (nom/manzil bo'yicha).
   const warehouseList = useMemo(() => warehouses ?? [], [warehouses]);
-  const view = useTableView(warehouseList, (w) => `${w.name} ${w.address ?? ""}`, 12);
+  const view = useTableView(warehouseList, (w) => `${w.name} ${w.address ?? ""}`, 12, {
+    // Kartalar nom yoki manzil bo'yicha saralanadi
+    name: (w) => w.name,
+    address: (w) => w.address,
+  });
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Warehouse | null>(null);
@@ -135,6 +144,21 @@ export default function WarehousesPage() {
         onChange={view.setQuery}
         placeholder="Ombor nomi yoki manzili bo'yicha qidirish..."
       />
+
+      {/* Ombor kartalari uchun saralash (jadval sarlavhasi yo'q) */}
+      <div className="md:hidden">
+        <MobileSortSelect view={view} options={[{ key: "name", label: "Nomi" }, { key: "address", label: "Manzil" }]} />
+      </div>
+      <div className="hidden items-center gap-2 text-sm md:flex">
+        <span className="text-muted-foreground">Saralash:</span>
+        <Button size="sm" variant={view.sort?.key === "name" ? "default" : "outline"} onClick={() => view.toggleSort("name")}>
+          Nomi
+        </Button>
+        <Button size="sm" variant={view.sort?.key === "address" ? "default" : "outline"} onClick={() => view.toggleSort("address")}>
+          Manzil
+        </Button>
+        {view.sort && <span className="text-muted-foreground">({view.sort.direction === "asc" ? "o'sish" : "kamayish"})</span>}
+      </div>
 
       {isLoading ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -223,6 +247,7 @@ export default function WarehousesPage() {
           total={view.total}
           pageSize={view.pageSize}
           onPageChange={view.setPage}
+          onPageSizeChange={view.setPageSize}
         />
         </>
       )}

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -14,6 +15,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import {
@@ -45,10 +47,26 @@ export function PaymentFormDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  // Backend "qolgan qarzdan oshib ketdi" desa - xabar shu yerda saqlanadi va
+  // "Avans sifatida saqlash" tanlovi ko'rsatiladi.
+  const [overpayMessage, setOverpayMessage] = useState<string | null>(null);
+  const [allowOverpay, setAllowOverpay] = useState(false);
   const { handleSubmit, control, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { amount: "", currency: "UZS", method: "cash" },
   });
+
+  // Dialog ochilganda ortiqcha-to'lov holati tozalanadi. Bu render paytida
+  // "oldingi qiymat bilan solishtirish" usulida qilinadi (effect ichida
+  // setState chaqirish lint xatosi beradi va ortiqcha render keltiradi).
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setOverpayMessage(null);
+      setAllowOverpay(false);
+    }
+  }
 
   useEffect(() => {
     if (open) reset({ amount: "", currency: "UZS", method: "cash" });
@@ -62,6 +80,8 @@ export function PaymentFormDialog({
         amount: Number(values.amount),
         currency: values.currency,
         method: values.method,
+        // Faqat foydalanuvchi "avans" deb tasdiqlagandagina yuboriladi.
+        ...(allowOverpay ? { allowOverpay: true } : {}),
       }),
     onSuccess: () => {
       toast.success("To'lov qayd etildi");
@@ -70,9 +90,21 @@ export function PaymentFormDialog({
       queryClient.invalidateQueries({ queryKey: ["sales"] });
       queryClient.invalidateQueries({ queryKey: ["sale", saleId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // To'lov kassa qatori va foyda/qarz kartalariga ham ta'sir qiladi.
+      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["accounting-report"] });
+      queryClient.invalidateQueries({ queryKey: ["profit-report"] });
       onOpenChange(false);
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
+    onError: (err) => {
+      // Ortiqcha to'lov: toast o'rniga formada xabar + avans tanlovi ko'rsatiladi.
+      if (err instanceof ApiError && err.status === 400 && err.message.includes("oshib ketdi")) {
+        setOverpayMessage(err.message);
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi");
+    },
   });
 
   return (
@@ -89,7 +121,17 @@ export function PaymentFormDialog({
                 control={control}
                 name="amount"
                 render={({ field }) => (
-                  <MoneyInput id="amount" autoFocus value={field.value} onChange={field.onChange} />
+                  <MoneyInput
+                    id="amount"
+                    autoFocus
+                    value={field.value}
+                    onChange={(v) => {
+                      field.onChange(v);
+                      // Summa o'zgarsa, oldingi "ortiqcha to'lov" ogohlantirishi eskirdi.
+                      setOverpayMessage(null);
+                      setAllowOverpay(false);
+                    }}
+                  />
                 )}
               />
               {errors.amount && (
@@ -149,8 +191,29 @@ export function PaymentFormDialog({
               )}
             />
           </div>
+          {overpayMessage && (
+            <div className="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              <p className="flex items-start gap-2">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <span>{overpayMessage}</span>
+              </p>
+              <label className="flex cursor-pointer items-start gap-2">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={allowOverpay}
+                  onCheckedChange={(checked) => setAllowOverpay(checked === true)}
+                />
+                <span>
+                  <span className="block font-medium">Avans sifatida saqlash</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Ortiqcha summa hamkorning avansi (bizning unga qarzimiz) bo'lib qoladi
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
           <DialogFooter>
-            <Button type="submit" disabled={mutation.isPending}>
+            <Button type="submit" disabled={mutation.isPending || (!!overpayMessage && !allowOverpay)}>
               {mutation.isPending ? "Saqlanmoqda..." : "Saqlash"}
             </Button>
           </DialogFooter>

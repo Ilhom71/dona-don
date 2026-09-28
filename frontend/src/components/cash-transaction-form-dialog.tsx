@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -40,6 +41,8 @@ const schema = z.object({
   // Faqat method="bank" bo'lganda ma'noli - aynan qaysi bank hisob raqamiga/dan.
   bankAccount: z.string().optional(),
   note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
+  // Faqat hamkor tanlanganda ma'noli: yozuv hamkor qarzini o'zgartiradimi.
+  affectsPartnerBalance: z.boolean(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -81,7 +84,7 @@ export function CashTransactionFormDialog({
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { partnerId: "", amountUzs: "", method: "cash", bankAccount: "", note: "" },
+    defaultValues: { partnerId: "", amountUzs: "", method: "cash", bankAccount: "", note: "", affectsPartnerBalance: true },
   });
 
   useEffect(() => {
@@ -93,11 +96,13 @@ export function CashTransactionFormDialog({
         method: "cash",
         bankAccount: initialPartner?.bankAccount ?? "",
         note: "",
+        affectsPartnerBalance: true,
       });
     }
   }, [open, initialPartnerId, partners, reset]);
 
   const method = watch("method");
+  const partnerId = watch("partnerId");
 
   // Hamkor tanlanganda (yoki o'zgartirilganda), agar uning saqlangan bank
   // hisob raqami bo'lsa - avtomatik taklif qilinadi (baribir qo'lda
@@ -118,6 +123,8 @@ export function CashTransactionFormDialog({
         method: values.method,
         bankAccount: values.method === "bank" ? values.bankAccount || null : null,
         note: values.note,
+        // Hamkor tanlanmagan bo'lsa qarzga ta'sir qiladigan narsa yo'q - standart qiymat (true) yuboriladi.
+        affectsPartnerBalance: values.partnerId ? values.affectsPartnerBalance : true,
       }),
     onSuccess: () => {
       toast.success(direction === "in" ? "Kassaga kirim qayd etildi" : "Kassadan chiqim qayd etildi");
@@ -125,6 +132,7 @@ export function CashTransactionFormDialog({
       queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
       // Hamkor tanlangan bo'lsa, uning balansi ham o'zgargan bo'lishi mumkin.
       queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["accounting-report"] });
       queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
       onOpenChange(false);
     },
@@ -176,6 +184,27 @@ export function CashTransactionFormDialog({
               </Button>
             </div>
           </div>
+          {partnerId && (
+            <Controller
+              control={control}
+              name="affectsPartnerBalance"
+              render={({ field }) => (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={field.value}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                  />
+                  <span className="space-y-0.5 text-sm">
+                    <span className="block font-medium">Hamkor qarziga ta'sir qiladi</span>
+                    <span className="block text-xs text-muted-foreground">
+                      O'chirilsa - faqat kassa yozuvi, qarz o'zgarmaydi
+                    </span>
+                  </span>
+                </label>
+              )}
+            />
+          )}
           <div className="space-y-2">
             <Label htmlFor="amountUzs">Summa (so&apos;m)</Label>
             <Controller

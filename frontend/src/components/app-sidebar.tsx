@@ -5,11 +5,12 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { ChevronDown, LogOut } from "lucide-react";
 import { navGroups } from "./nav-items";
+import { PwaInstallButton } from "./pwa-install-button";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 /**
- * Sidebarda aynan 4 ta bo'lim (Kassa/Ombor/Savdo/Arxiv) ko'rinadi -
+ * Sidebarda 5 ta bo'lim (Kassa/Ombor/Savdo/Arxiv/SMS) ko'rinadi -
  * foydalanuvchi so'roviga ko'ra. Ko'p sahifali bo'limlar (Kassa/Ombor/Savdo)
  * bosilganda ochilib/yopilib turadi (accordion), ichidagi sahifalar shu
  * bo'lim ostida joylashadi. Joriy sahifa qaysi bo'limga tegishli bo'lsa,
@@ -40,7 +41,8 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r bg-background md:flex md:flex-col">
+    // sticky + h-screen: footer (install button + logout) stays at the bottom of the viewport
+    <aside className="hidden w-64 shrink-0 border-r bg-background md:sticky md:top-0 md:flex md:h-screen md:flex-col">
       <div className="flex h-16 items-center gap-2 border-b px-6">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/wheat-sack.png" alt="Dona Don" width={32} height={32} />
@@ -112,10 +114,11 @@ export function AppSidebar() {
         })}
       </nav>
 
-      <div className="border-t p-3">
+      <div className="flex items-center gap-2 border-t p-3">
+        <PwaInstallButton />
         <button
           onClick={() => logout()}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="flex flex-1 items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <LogOut className="h-4 w-4" />
           Chiqish

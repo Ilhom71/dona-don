@@ -1,0 +1,1 @@
+ALTER TABLE "sms_logs" ADD COLUMN "template_id" varchar(128);

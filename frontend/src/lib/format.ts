@@ -17,6 +17,22 @@ export function formatMoney(value: number | string, currency: Currency = "UZS") 
   return `${uzsFormatter.format(num)} so'm`;
 }
 
+const compactFormatter = new Intl.NumberFormat("uz-UZ", {
+  maximumFractionDigits: 2,
+});
+
+/**
+ * Qisqa pul ko'rinishi (kartalar uchun): 377 025 000 -> "377 mln so'm",
+ * 1 250 000 000 -> "1,25 mlrd so'm", 45 000 -> "45 000 so'm".
+ * To'liq qiymatni `title` (hover) da formatMoney bilan ko'rsating.
+ */
+export function formatMoneyCompact(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `${compactFormatter.format(value / 1_000_000_000)} mlrd so'm`;
+  if (abs >= 1_000_000) return `${compactFormatter.format(value / 1_000_000)} mln so'm`;
+  return `${uzsFormatter.format(value)} so'm`;
+}
+
 export function formatQuantity(value: number | string, unit: Unit) {
   const num = typeof value === "string" ? Number(value) : value;
   return `${numberFormatter.format(num)} ${unit === "ton" ? "t" : "kg"}`;
@@ -102,4 +118,31 @@ export const expenseCategoryLabels: Record<ExpenseCategory, string> = {
 export const cashDirectionLabels: Record<string, string> = {
   in: "Kirim",
   out: "Chiqim",
+};
+
+/**
+ * Kassa yozuvi yorlig'i: xarajat (ijara, ish haqi, transport...) qaytmas
+ * chiqim; hamkorga naqd chiqim va yetkazib beruvchiga to'lov esa qarz
+ * hisobiga ta'sir qilgani uchun oddiy "Chiqim" bo'lib qoladi.
+ */
+export function cashRowLabel(row: {
+  direction: string;
+  source: string;
+  category: string;
+  purpose?: string | null;
+}) {
+  if (row.source === "expense" && row.category !== "supplier_payment") return "Qaytmas chiqim";
+  if (row.purpose === "funding") return row.direction === "in" ? "Pul olib turish" : "Pulni qaytarish";
+  return cashDirectionLabels[row.direction] ?? row.direction;
+}
+
+export const smsStatusLabels: Record<string, string> = {
+  sent: "Yuborildi",
+  failed: "Xato",
+};
+
+export const smsCreditTypeLabels: Record<string, string> = {
+  topup: "To'ldirish",
+  usage: "Ishlatildi",
+  refund: "Qaytarildi",
 };

@@ -37,12 +37,17 @@ export async function createExpense(
 ) {
   const rate = await getCurrentRate();
   const amountUzs = input.currency === "USD" ? input.amount * rate : input.amount;
+  // Faqat "supplier_payment" hamkor qarzini kamaytiradi - boshqa
+  // kategoriyalarda (ijara, ish haqi va h.k.) hamkor tasodifan berilgan
+  // bo'lsa ham majburan tozalanadi, aks holda qarzga bog'liq bo'lmagan
+  // xarajat hamkor tarixida chalkash ko'rinishi mumkin edi.
+  const partnerId = input.category === "supplier_payment" ? input.partnerId ?? null : null;
 
   const [expense] = await tx
     .insert(expenses)
     .values({
       category: input.category,
-      partnerId: input.partnerId ?? null,
+      partnerId,
       amount: String(input.amount),
       currency: input.currency,
       exchangeRateSnapshot: String(rate),

@@ -9,8 +9,9 @@ import {
   exportPartners,
   exportProductsTemplate,
   exportExpensesTemplate,
+  exportCashTemplate,
 } from "./export";
-import { importProducts, importExpenses } from "./import";
+import { importProducts, importExpenses, importCashLedger } from "./import";
 import { requireAuth } from "../../middleware/auth";
 
 export const excelRoutes = new Hono();
@@ -109,6 +110,26 @@ excelRoutes.post("/expenses/import", async (c) => {
   }
   try {
     const result = await importExpenses(await file.arrayBuffer());
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+// Kassa shabloni va importi - eksport qilingan kassa fayli qayta yuklanadi.
+excelRoutes.get("/cash/template", async (c) => {
+  const buffer = await exportCashTemplate();
+  return excelResponse(c, buffer, "kassa-shablon.xlsx");
+});
+
+excelRoutes.post("/cash/import", async (c) => {
+  const body = await c.req.parseBody();
+  const file = body.file;
+  if (!(file instanceof File)) {
+    return c.json({ error: "Fayl yuborilmadi" }, 400);
+  }
+  try {
+    const result = await importCashLedger(await file.arrayBuffer());
     return c.json(result);
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);

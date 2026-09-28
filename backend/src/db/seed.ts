@@ -3,8 +3,13 @@ import { users, exchangeRates } from "./schema";
 import { hashPassword } from "../modules/auth/service";
 
 /**
- * Boshlang'ich ma'lumotlarni yaratadi: bitta admin foydalanuvchi va boshlang'ich
- * valyuta kursi. `bun run seed` orqali ishga tushiriladi, faqat bir marta kerak.
+ * Boshlang'ich ma'lumotlarni yaratadi: bitta admin foydalanuvchi va
+ * boshlang'ich valyuta kursi. `bun run seed` orqali ishga tushiriladi,
+ * faqat bir marta kerak.
+ *
+ * SMS Admin (SMS bo'limidagi kredit boshqaruv, ASOSIY admindan mustaqil
+ * login/parol) bu yerda YARATILMAYDI - .env orqali emas, to'g'ridan-to'g'ri
+ * bazaga `bun run sms-admin:set -- <username> <password>` bilan o'rnatiladi.
  */
 async function seed() {
   const username = process.env.ADMIN_USERNAME ?? "admin";

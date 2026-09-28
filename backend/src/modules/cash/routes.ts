@@ -7,15 +7,34 @@ import {
   cancelCashTransaction,
   restoreCashTransaction,
 } from "./service";
+import { parseDateParam } from "../../utils/date";
 import { requireAuth } from "../../middleware/auth";
 
-const cashTransactionSchema = z.object({
-  direction: z.enum(["in", "out"]),
-  amountUzs: z.number().positive("Summa musbat bo'lishi kerak"),
-  note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
-  partnerId: z.string().uuid().nullable().optional(),
-  method: z.enum(["cash", "card", "bank"]).optional(),
-  bankAccount: z.string().nullable().optional(),
+const cashTransactionSchema = z
+  .object({
+    direction: z.enum(["in", "out"]),
+    amountUzs: z.number().positive("Summa musbat bo'lishi kerak"),
+    note: z.string().min(1, "Sharh (izoh) kiritilishi shart"),
+    partnerId: z.string().uuid().nullable().optional(),
+    method: z.enum(["cash", "card", "bank"]).optional(),
+    bankAccount: z.string().nullable().optional(),
+    // false = only a cash record, partner debt is not changed
+    affectsPartnerBalance: z.boolean().optional(),
+    // "funding" = "Pul olib turish" - kassani to'ldirish uchun kiritilgan pul.
+    purpose: z.enum(["regular", "funding"]).optional(),
+  })
+  .refine((v) => v.purpose !== "funding" || !v.partnerId, {
+    // Pul olib turish hech qachon hamkorga bog'lanmaydi - aks holda hamkor
+    // qarziga tasodifan ta'sir qilib qo'yishi mumkin.
+    message: "Pul olib turish hamkorga bog'lanmaydi",
+    path: ["partnerId"],
+  });
+
+// Optional ledger filters (query string); invalid values are ignored.
+const ledgerQuerySchema = z.object({
+  partnerId: z.string().uuid().optional().catch(undefined),
+  method: z.enum(["cash", "card", "bank"]).optional().catch(undefined),
+  kind: z.enum(["in", "out", "non_returnable"]).optional().catch(undefined),
 });
 
 const cancelSchema = z.object({ reason: z.string().nullable().optional() });
@@ -24,10 +43,16 @@ export const cashRoutes = new Hono();
 cashRoutes.use("*", requireAuth);
 
 cashRoutes.get("/ledger", async (c) => {
-  const { from, to } = c.req.query();
+  const { from, to, partnerId, method, kind } = c.req.query();
+  const f = ledgerQuerySchema.parse({
+    partnerId: partnerId || undefined,
+    method: method || undefined,
+    kind: kind || undefined,
+  });
   const rows = await getCashLedger({
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+    from: parseDateParam(from),
+    to: parseDateParam(to, { endOfDay: true }),
+    ...f,
   });
   return c.json(rows);
 });
@@ -35,8 +60,8 @@ cashRoutes.get("/ledger", async (c) => {
 cashRoutes.get("/summary", async (c) => {
   const { from, to } = c.req.query();
   const summary = await getCashSummary({
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+    from: parseDateParam(from),
+    to: parseDateParam(to, { endOfDay: true }),
   });
   return c.json(summary);
 });

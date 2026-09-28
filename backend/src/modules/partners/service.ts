@@ -1,4 +1,4 @@
-import { and, eq, isNull, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNull, isNotNull, lte, sql } from "drizzle-orm";
 import { db } from "../../db";
 import {
   partners,
@@ -26,8 +26,16 @@ import {
  * `filters.partnerId` berilsa - bitta hamkor uchun (arxivlangan bo'lsa ham,
  * masalan tarixiy hisob-varag'ini ko'rish uchun) qaytaradi; berilmasa -
  * faqat faol (arxivlanmagan) hamkorlar ro'yxati.
+ *
+ * `filters.asOfDate` berilsa - balans **shu sanagacha** (kunlik yozuvlar
+ * bilan) hisoblanadi, ya'ni "o'sha paytda qarz qancha edi" ko'rinishi -
+ * Kassa amaliyotlari sahifasidagi sana filtri shu orqali ishlaydi.
+ * Berilmasa - hozirgi (to'liq tarix) balans.
  */
-export async function listPartnersWithBalance(filters: { partnerId?: string } = {}) {
+export async function listPartnersWithBalance(
+  filters: { partnerId?: string; asOfDate?: Date } = {}
+) {
+  const asOf = filters.asOfDate;
   const salesTotals = db
     .select({
       partnerId: sales.partnerId,
@@ -35,7 +43,7 @@ export async function listPartnersWithBalance(filters: { partnerId?: string } = 
       total: sql<string>`sum(${sales.totalAmountUzs})`.as("total_sales_uzs"),
     })
     .from(sales)
-    .where(isNull(sales.cancelledAt))
+    .where(asOf ? and(isNull(sales.cancelledAt), lte(sales.saleDate, asOf)) : isNull(sales.cancelledAt))
     .groupBy(sales.partnerId)
     .as("sales_totals");
 
@@ -46,7 +54,9 @@ export async function listPartnersWithBalance(filters: { partnerId?: string } = 
       total: sql<string>`sum(${payments.amountUzs})`.as("total_paid_uzs"),
     })
     .from(payments)
-    .where(isNull(payments.cancelledAt))
+    .where(
+      asOf ? and(isNull(payments.cancelledAt), lte(payments.paymentDate, asOf)) : isNull(payments.cancelledAt)
+    )
     .groupBy(payments.partnerId)
     .as("payment_totals");
 
@@ -57,7 +67,11 @@ export async function listPartnersWithBalance(filters: { partnerId?: string } = 
       total: sql<string>`sum(${purchases.totalAmountUzs})`.as("total_purchases_uzs"),
     })
     .from(purchases)
-    .where(isNull(purchases.cancelledAt))
+    .where(
+      asOf
+        ? and(isNull(purchases.cancelledAt), lte(purchases.purchaseDate, asOf))
+        : isNull(purchases.cancelledAt)
+    )
     .groupBy(purchases.partnerId)
     .as("purchase_totals");
 
@@ -68,7 +82,13 @@ export async function listPartnersWithBalance(filters: { partnerId?: string } = 
     })
     .from(expenses)
     // Bekor qilingan xarajatlar (to'lovlar) hisobga kirmaydi.
-    .where(and(eq(expenses.category, "supplier_payment"), isNull(expenses.cancelledAt)))
+    .where(
+      and(
+        eq(expenses.category, "supplier_payment"),
+        isNull(expenses.cancelledAt),
+        asOf ? lte(expenses.expenseDate, asOf) : undefined
+      )
+    )
     .groupBy(expenses.partnerId)
     .as("supplier_payment_totals");
 
@@ -88,7 +108,15 @@ export async function listPartnersWithBalance(filters: { partnerId?: string } = 
       ),
     })
     .from(cashTransactions)
-    .where(and(isNotNull(cashTransactions.partnerId), isNull(cashTransactions.cancelledAt)))
+    // affectsPartnerBalance=false yozuvlar faqat kassa harakati - qarzga kirmaydi.
+    .where(
+      and(
+        isNotNull(cashTransactions.partnerId),
+        isNull(cashTransactions.cancelledAt),
+        eq(cashTransactions.affectsPartnerBalance, true),
+        asOf ? lte(cashTransactions.transactionDate, asOf) : undefined
+      )
+    )
     .groupBy(cashTransactions.partnerId)
     .as("manual_cash_totals");
 
@@ -286,7 +314,7 @@ export async function getPartnerLedger(partnerId: string) {
   const manualCashRows = await db
     .select()
     .from(cashTransactions)
-    .where(eq(cashTransactions.partnerId, partnerId));
+    .where(and(eq(cashTransactions.partnerId, partnerId), eq(cashTransactions.affectsPartnerBalance, true)));
 
   const rows: Omit<PartnerLedgerRow, "balanceUzs">[] = [];
 

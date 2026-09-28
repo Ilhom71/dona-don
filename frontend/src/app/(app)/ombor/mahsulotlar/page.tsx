@@ -37,7 +37,12 @@ import {
 import { ProductFormDialog } from "@/components/product-form-dialog";
 import { ProductBulkCreateDialog } from "@/components/product-bulk-create-dialog";
 import { ExcelActions } from "@/components/excel-actions";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { Product, ProductStock, StockLot } from "@/lib/types";
@@ -67,7 +72,14 @@ export default function ProductsPage() {
   const lotsForProduct = (productId: string) => (lots ?? []).filter((l) => l.productId === productId);
 
   const products = useMemo(() => data ?? [], [data]);
-  const view = useTableView(products, (p) => `${p.name} ${p.notes ?? ""}`);
+  const view = useTableView(products, (p) => `${p.name} ${p.notes ?? ""}`, 20, {
+    // Saralanadigan ustunlar: nom, qoldiq (kg'ga keltirilgan), tan narx, sotuv narxi, jami qiymat
+    name: (p) => p.name,
+    stock: (p) => Number(p.stockQuantity) * (p.unit === "ton" ? 1000 : 1),
+    cost: (p) => Number(p.avgCostUzs),
+    price: (p) => (p.sellingPriceUzs === null ? null : Number(p.sellingPriceUzs)),
+    value: (p) => Number(p.stockQuantity) * Number(p.avgCostUzs),
+  });
   // Jami qator: qoldiq kg'da (1 t = 1000 kg) va umumiy qiymat - qidiruvdan o'tgan barcha qatorlar bo'yicha.
   const totalKg = view.filtered.reduce(
     (sum, p) => sum + Number(p.stockQuantity) * (p.unit === "ton" ? 1000 : 1),
@@ -143,17 +155,21 @@ export default function ProductsPage() {
       ) : (
         <>
           {/* Desktop table */}
+          <MobileSortSelect
+            view={view}
+            options={[{ key: "name", label: "Nomi" }, { key: "stock", label: "Qoldiq" }, { key: "cost", label: "Tan narx" }, { key: "price", label: "Sotuv narxi" }, { key: "value", label: "Jami qiymat" }]}
+          />
           <Card className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nomi</TableHead>
+                  <SortableHead label="Nomi" sortKey="name" view={view} />
                   <TableHead>Birlik</TableHead>
-                  <TableHead>Qoldiq</TableHead>
+                  <SortableHead label="Qoldiq" sortKey="stock" view={view} />
                   <TableHead>Omborlar</TableHead>
-                  <TableHead>Tan narx</TableHead>
-                  <TableHead>Sotuv narxi</TableHead>
-                  <TableHead className="text-right">Jami qiymat</TableHead>
+                  <SortableHead label="Tan narx" sortKey="cost" view={view} />
+                  <SortableHead label="Sotuv narxi" sortKey="price" view={view} />
+                  <SortableHead label="Jami qiymat" sortKey="value" view={view} align="right" />
                   <TableHead className="w-32"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -324,6 +340,7 @@ export default function ProductsPage() {
             total={view.total}
             pageSize={view.pageSize}
             onPageChange={view.setPage}
+            onPageSizeChange={view.setPageSize}
           />
         </>
       )}

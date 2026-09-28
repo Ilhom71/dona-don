@@ -53,6 +53,9 @@ const schema = z.object({
   currency: z.enum(["UZS", "USD"]),
   method: z.enum(["cash", "card", "bank"]),
   description: z.string().min(1, "Tavsif kiritilishi shart"),
+}).refine((v) => v.category !== "supplier_payment" || !!v.partnerId, {
+  message: "Yetkazib beruvchini tanlang",
+  path: ["partnerId"],
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -113,10 +116,16 @@ export function ExpenseFormDialog({
         description: values.description,
       }),
     onSuccess: () => {
-      toast.success("Xarajat qayd etildi");
+      toast.success("Qaytmas chiqim qayd etildi");
       queryClient.invalidateQueries({ queryKey: ["expenses"] });
       queryClient.invalidateQueries({ queryKey: ["cash-summary"] });
       queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
+      // Xarajat foydaga, "yetkazib beruvchiga to'lov" esa hamkor balansiga ta'sir qiladi.
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-ledger"] });
+      queryClient.invalidateQueries({ queryKey: ["accounting-report"] });
+      queryClient.invalidateQueries({ queryKey: ["profit-report"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       onOpenChange(false);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -126,7 +135,7 @@ export function ExpenseFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Yangi xarajat</DialogTitle>
+          <DialogTitle>Yangi qaytmas chiqim (xarajat)</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
           <div className="space-y-2">
@@ -187,6 +196,9 @@ export function ExpenseFormDialog({
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
+              {errors.partnerId && (
+                <p className="text-sm text-destructive">{errors.partnerId.message}</p>
+              )}
             </div>
           )}
 

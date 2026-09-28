@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
-// Ilovani telefonga o'rnatish (PWA "Add to Home Screen") uchun. Offline/service
-// worker qo'shilmagan - faqat brauzerning tabiiy o'rnatish imkoniyati.
+// PWA install (desktop + "Add to Home Screen"). public/sw.js is a minimal
+// pass-through service worker (no offline cache) that makes the app installable.
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Dona Don",
@@ -12,6 +12,12 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#ffffff",
     theme_color: "#caa23c",
     icons: [
+      {
+        src: "/wheat-sack.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
       {
         src: "/wheat-sack.png",
         sizes: "512x512",

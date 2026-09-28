@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createSale, updateSale, listSales, getSale, cancelSale } from "./service";
+import { parseDateParam } from "../../utils/date";
 import { requireAuth } from "../../middleware/auth";
 
 const saleSchema = z.object({
@@ -25,10 +26,19 @@ const saleSchema = z.object({
   initialPayment: z.number().nonnegative().nullable().optional(),
   paymentMethod: z.enum(["cash", "card", "bank"]).optional(),
   notes: z.string().nullable().optional(),
+  // Savdo saqlangach hamkorga avtomatik SMS yuborilsinmi - standart true
+  // (frontenddagi checkbox bilan o'chirilishi mumkin).
+  notifyPartnerBySms: z.boolean().optional(),
 });
 
-// Tahrirlashda to'lov o'zgartirilmaydi - initialPayment/paymentMethod yo'q.
-const saleUpdateSchema = saleSchema.omit({ initialPayment: true, paymentMethod: true });
+// Tahrirlashda to'lov O'ZGARTIRILMAYDI (initialPayment/paymentMethod yo'q) va
+// SMS ham yuborilmaydi (notifyPartnerBySms) - tahrirlash yangi yuk olish emas,
+// xatoni tuzatish, shuning uchun mijozga qayta SMS yuborilmaydi.
+const saleUpdateSchema = saleSchema.omit({
+  initialPayment: true,
+  paymentMethod: true,
+  notifyPartnerBySms: true,
+});
 
 const cancelSchema = z.object({
   reason: z.string().nullable().optional(),
@@ -47,8 +57,8 @@ saleRoutes.get("/", async (c) => {
   const sales = await listSales({
     partnerId: partnerId || undefined,
     paymentStatus: (paymentStatus as "paid" | "partial" | "credit" | "cancelled") || undefined,
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+    from: parseDateParam(from),
+    to: parseDateParam(to, { endOfDay: true }),
   });
   return c.json(sales);
 });

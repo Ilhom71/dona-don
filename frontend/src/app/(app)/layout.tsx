@@ -5,7 +5,6 @@ import { useAuth } from "@/hooks/use-auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppHeader } from "@/components/app-header";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
-
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();
 

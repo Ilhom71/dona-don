@@ -18,12 +18,12 @@ export function MobileBottomNav() {
             key={item.href}
             href={item.href}
             className={cn(
-              "flex flex-1 flex-col items-center justify-center gap-1 text-xs",
+              "flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-0.5 text-[11px]",
               active ? "text-primary" : "text-muted-foreground"
             )}
           >
             <Icon className="h-5 w-5" />
-            {item.label}
+            <span className="w-full truncate text-center">{item.label}</span>
           </Link>
         );
       })}

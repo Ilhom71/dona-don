@@ -21,7 +21,12 @@ import { PaymentFormDialog } from "@/components/payment-form-dialog";
 import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { BalanceBadge } from "@/components/balance-badge";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { api, apiUrl } from "@/lib/api";
 import type { Partner, PartnerLedgerRow } from "@/lib/types";
@@ -60,7 +65,16 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
   const view = useTableView(
     ledgerRows,
     (r) =>
-      `${r.productName ?? ""} ${r.vehicleNumber ?? ""} ${r.kind === "payment" ? "to'lov" : r.kind === "supplier-payment" ? "yetkazib beruvchiga to'lov" : r.kind === "purchase-delivery" ? "xarid" : "savdo"}`
+      `${r.productName ?? ""} ${r.vehicleNumber ?? ""} ${r.kind === "payment" ? "to'lov" : r.kind === "supplier-payment" ? "yetkazib beruvchiga to'lov" : r.kind === "purchase-delivery" ? "xarid" : "savdo"}`,
+    20,
+    // Saralanadigan ustunlar: sana, mahsulot, summa, berilgan pul, qoldiq
+    {
+      date: (r) => Date.parse(r.date),
+      product: (r) => r.productName,
+      goods: (r) => r.goodsValueUzs,
+      paid: (r) => r.paidUzs,
+      balance: (r) => r.balanceUzs,
+    }
   );
   // Jami qator: bekor qilingan qatorlar hisobga kirmaydi (qoldiq ham ularni hisobga olmaydi).
   const liveRows = view.filtered.filter((r) => !r.cancelled);
@@ -156,20 +170,24 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
         </Card>
       ) : (
         <>
+          <MobileSortSelect
+            view={view}
+            options={[{ key: "date", label: "Sana" }, { key: "product", label: "Mahsulot" }, { key: "goods", label: "Summa" }, { key: "paid", label: "Berilgan pul" }, { key: "balance", label: "Qoldiq" }]}
+          />
           <Card className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">№</TableHead>
-                  <TableHead>Sana</TableHead>
-                  <TableHead>Mahsulot</TableHead>
+                  <SortableHead label="Sana" sortKey="date" view={view} />
+                  <SortableHead label="Mahsulot" sortKey="product" view={view} />
                   <TableHead>Mashina raqami</TableHead>
                   <TableHead>Miqdor</TableHead>
                   <TableHead>Narxi</TableHead>
-                  <TableHead className="text-right">Summa</TableHead>
+                  <SortableHead label="Summa" sortKey="goods" view={view} align="right" />
                   <TableHead className="text-right">Yuk puli</TableHead>
-                  <TableHead className="text-right">Berilgan pul</TableHead>
-                  <TableHead className="text-right">Qoldiq +/-</TableHead>
+                  <SortableHead label="Berilgan pul" sortKey="paid" view={view} align="right" />
+                  <SortableHead label="Qoldiq +/-" sortKey="balance" view={view} align="right" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -323,6 +341,7 @@ export default function PartnerLedgerPage(props: PageProps<"/savdo/hamkorlar/[id
             total={view.total}
             pageSize={view.pageSize}
             onPageChange={view.setPage}
+            onPageSizeChange={view.setPageSize}
           />
         </>
       )}

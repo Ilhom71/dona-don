@@ -15,8 +15,9 @@ import { reportRoutes } from "./modules/reports/routes";
 import { excelRoutes } from "./modules/excel/routes";
 import { cashRoutes } from "./modules/cash/routes";
 import { expenseRoutes } from "./modules/expenses/routes";
-import { dayClosingRoutes } from "./modules/day-closings/routes";
 import { archiveRoutes } from "./modules/archive/routes";
+import { smsRoutes } from "./modules/sms/routes";
+import { smsAdminRoutes } from "./modules/sms/admin-routes";
 
 const app = new Hono();
 
@@ -47,8 +48,12 @@ app.route("/reports", reportRoutes);
 app.route("/excel", excelRoutes);
 app.route("/cash", cashRoutes);
 app.route("/expenses", expenseRoutes);
-app.route("/day-closings", dayClosingRoutes);
 app.route("/archive", archiveRoutes);
+app.route("/sms", smsRoutes);
+// Alohida top-level prefiks (`/sms-admin`, `/sms/admin` EMAS) - `smsRoutes`
+// ichidagi `.use("*", requireAuth)` bilan tartib nizosiga tushib qolmasligi
+// uchun (CLAUDE.md: global/ustma-ust middleware Hono'da muammo keltirib chiqaradi).
+app.route("/sms-admin", smsAdminRoutes);
 
 app.onError((err, c) => {
   console.error(err);

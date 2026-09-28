@@ -7,14 +7,13 @@ import { cn } from "@/lib/utils";
 const tabs = [
   { label: "Kassa", href: "/" },
   { label: "Kassa amaliyotlari", href: "/kassa/amaliyotlari" },
-  { label: "Savdolar", href: "/kassa/savdolar" },
   { label: "Hamkorlar", href: "/kassa/hamkorlar" },
 ];
 
 /**
  * Kassa bo'limining o'z ichki nav-tab qatori - har biri bosilganda to'liq
  * alohida sahifa ochiladi (asosiy sidebar nav'dan tashqari, Kassa
- * bo'limining o'zi uchun). Barcha 4 ta Kassa sahifasining tepasida ishlatiladi.
+ * bo'limining o'zi uchun). Barcha 3 ta Kassa sahifasining tepasida ishlatiladi.
  * Buxgalteriya bo'limi olib tashlangan - hamma narsa Kassada ko'rinadi.
  */
 export function KassaSubNav() {

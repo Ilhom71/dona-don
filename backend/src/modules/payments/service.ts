@@ -11,6 +11,8 @@ type CreatePaymentInput = {
   method?: "cash" | "card" | "bank";
   notes?: string | null;
   paymentDate?: Date;
+  // true = allow paying more than the remaining debt (stored as an advance)
+  allowOverpay?: boolean;
 };
 
 /** To'lov qayd etadi; agar saleId berilsa, o'sha savdoning to'langan summasi va holatini yangilaydi. */
@@ -28,6 +30,15 @@ export async function createPayment(input: CreatePaymentInput) {
       if (!target) throw new Error("Savdo topilmadi");
       if (target.cancelledAt) throw new Error("Bekor qilingan savdoga to'lov qo'shib bo'lmaydi");
       if (target.partnerId !== input.partnerId) throw new Error("Bu savdo tanlangan hamkorga tegishli emas");
+
+      // Overpayment guard: the payment must not exceed the remaining debt of
+      // the sale unless the caller explicitly allows it (advance). 1 UZS
+      // tolerance absorbs rounding from USD conversion.
+      const remainingUzs = Math.max(0, Number(target.totalAmountUzs) - Number(target.paidAmountUzs));
+      if (!input.allowOverpay && amountUzs > remainingUzs + 1) {
+        const remainingText = new Intl.NumberFormat("ru-RU").format(Math.round(remainingUzs));
+        throw new Error(`To'lov qolgan qarzdan (${remainingText} so'm) oshib ketdi`);
+      }
     }
 
     const [payment] = await tx

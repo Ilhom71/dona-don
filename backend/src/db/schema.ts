@@ -4,10 +4,12 @@ import {
   text,
   varchar,
   numeric,
+  integer,
   timestamp,
   pgEnum,
   index,
   uniqueIndex,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -39,6 +41,7 @@ export const paymentMethodEnum = pgEnum("payment_method", [
   "card",
   "bank",
 ]);
+export const smsStatusEnum = pgEnum("sms_status", ["sent", "failed"]); // TextUP orqali yuborish natijasi
 export const expenseCategoryEnum = pgEnum("expense_category", [
   "supplier_payment", // yetkazib beruvchiga to'lov (qarz kamayadi)
   "salary", // ish haqi
@@ -50,6 +53,17 @@ export const expenseCategoryEnum = pgEnum("expense_category", [
 
 // ---------- Users (bitta admin foydalanuvchi) ----------
 export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  username: varchar("username", { length: 64 }).notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ---------- SMS admin (asosiy admindan MUSTAQIL, alohida login/parol) ----------
+// Faqat SMS bo'limidagi "Admin" (SMS kredit to'ldirish) qismiga kirish uchun -
+// asosiy `users` jadvalidan ataylab ajratilgan (foydalanuvchi so'roviga ko'ra),
+// o'z JWT tokeni/cookie'siga ega (`sms_admin_token`, scope="sms_admin").
+export const smsAdmins = pgTable("sms_admins", {
   id: uuid("id").primaryKey().defaultRandom(),
   username: varchar("username", { length: 64 }).notNull().unique(),
   passwordHash: text("password_hash").notNull(),
@@ -481,6 +495,13 @@ export const expenses = pgTable(
 // to'ldiriladi). Ikkalasi bir xil jadvalda, faqat shu ustun bilan ajratiladi.
 export const cashAccountEnum = pgEnum("cash_account", ["kassa", "buxgalteriya"]);
 
+// "regular" - odatiy qo'lda kiritilgan kirim/chiqim (masalan hamkorga bog'liq).
+// "funding" - kassani to'ldirish uchun kiritilgan pul ("Pul olib turish"): hech
+// qachon hamkorga/qarzga bog'lanmaydi va foyda-zarar hisobotiga ta'sir qilmaydi,
+// faqat kassa qoldig'ida (qozonda) ko'rinadi. Xohlagan payt qaytarib qo'yish uchun
+// direction="out" + shu purpose bilan yozuv kiritiladi.
+export const cashTxPurposeEnum = pgEnum("cash_tx_purpose", ["regular", "funding"]);
+
 // ---------- Cash transactions (kassaga qo'lda kiritilgan kirim/chiqim) ----------
 // Savdo to'lovi (`payments`) yoki xarajat (`expenses`) bilan bog'liq bo'lmagan,
 // kassadan qo'lda pul kiritish/chiqarish uchun (masalan egasi naqd pul qo'shdi
@@ -515,10 +536,78 @@ export const cashTransactions = pgTable(
     // Bittasi bekor qilinganda ikkinchisi ham avtomatik bekor qilinadi
     // (aks holda ikki hisob orasida qoldiq mos kelmay qoladi).
     transferGroupId: uuid("transfer_group_id"),
+    // false bo'lsa - faqat kassa yozuvi, hamkor qarzi/balansiga ta'sir qilmaydi
+    // (masalan hamkor tanlangan, lekin qarz bo'lmagan oddiy kassa harakati).
+    affectsPartnerBalance: boolean("affects_partner_balance").notNull().default(true),
+    // "funding" yozuvlarida bu doim "regular" bo'lib qoladi - eski yozuvlar ham
+    // shunday deb hisoblanadi (standart qiymat).
+    purpose: cashTxPurposeEnum("purpose").notNull().default("regular"),
     transactionDate: timestamp("transaction_date").defaultNow().notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("cash_transactions_date_idx").on(t.transactionDate)]
+);
+
+// ---------- SMS logs (TextUP orqali hamkorlarga yuborilgan SMS tarixi) ----------
+// Har bir yozuv - BITTA hamkorga BITTA yuborish urinishi (bir nechta hamkorga
+// yuborilsa ham, har biri alohida qatorda saqlanadi - "kimga qachon
+// yuborilgani" aniq ko'rinishi va har birining holati (muvaffaqiyatli/xato)
+// alohida kuzatilishi uchun). Immutable ledger - hech qachon
+// o'chirilmaydi/tahrirlanmaydi.
+export const smsLogs = pgTable(
+  "sms_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    partnerId: uuid("partner_id").references(() => partners.id, { onDelete: "set null" }),
+    // Hamkor keyinchalik o'chirilsa/nomi o'zgarsa ham, o'sha paytdagi ism/raqam
+    // "suratga olinadi" (snapshot) - tarixiy to'g'rilik uchun.
+    partnerName: varchar("partner_name", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 32 }).notNull(),
+    // Yuborilgan (yoki yuborilishga urinilgan) matn - shablon ishlatilgan
+    // bo'lsa, shablon kontenti shu yerga yoziladi (tarixda aynan nima
+    // ketganini ko'rsatish uchun).
+    message: text("message").notNull(),
+    // Agar TextUP shablonidan foydalanilgan bo'lsa - shu shablonning ID'si
+    // (audit uchun, ixtiyoriy - erkin matn bilan yuborilganda bo'sh qoladi).
+    templateId: varchar("template_id", { length: 128 }),
+    status: smsStatusEnum("status").notNull(),
+    // TextUP tomonidan qaytarilgan SMS identifikatori (muvaffaqiyatli bo'lsa)
+    textupSmsId: varchar("textup_sms_id", { length: 128 }),
+    // Xatolik bo'lsa - TextUP yoki tarmoq xatosi matni
+    errorMessage: text("error_message"),
+    sentAt: timestamp("sent_at").defaultNow().notNull(),
+  },
+  (t) => [index("sms_logs_sent_at_idx").on(t.sentAt)]
+);
+
+// "topup" - Admin tomonidan qo'lda qo'shilgan SMS krediti (musbat son).
+// "usage" - bitta SMS yuborishda sarflangan kredit (doim -1).
+// "refund" - TextUP xatoligi tufayli (SMS aslida yuborilmagan) qaytarilgan
+// kredit (musbat 1) - immutable ledger qoidasiga ko'ra tuzatish teskari
+// yozuv bilan qilinadi, hech narsa o'chirilmaydi/tahrirlanmaydi.
+export const smsCreditTypeEnum = pgEnum("sms_credit_type", ["topup", "usage", "refund"]);
+
+// ---------- SMS credits (ichki SMS balans ledgeri) ----------
+// TextUP'ning o'zida haqiqiy balans/limit API'si yo'qligi sababli, dastur
+// o'zining ICHKI SMS balansini yuritadi: Admin haqiqatda TextUP orqali SMS
+// sotib olgach, shu yerga qo'lda "topup" kiritadi; har bir yuborilgan SMS
+// balansdan 1 tadan kamaytiradi; balans 0 bo'lsa yangi SMS yuborilmaydi.
+// Balans = barcha amount'lar yig'indisi (products.avgCostUzs + stock_movements
+// naqshiga o'xshab - lekin bu yerda alohida "joriy qoldiq" ustuni yo'q,
+// balans doim shu ledgerdan hisoblanadi).
+export const smsCredits = pgTable(
+  "sms_credits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    type: smsCreditTypeEnum("type").notNull(),
+    amount: integer("amount").notNull(),
+    // Faqat "topup" uchun - o'sha paytdagi 1 SMS narxi va umumiy summa (tarixiy snapshot).
+    pricePerSmsUzs: numeric("price_per_sms_uzs", { precision: 12, scale: 2 }),
+    totalUzs: numeric("total_uzs", { precision: 14, scale: 2 }),
+    note: text("note"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("sms_credits_created_at_idx").on(t.createdAt)]
 );
 
 // ---------- Relations ----------
@@ -529,11 +618,19 @@ export const partnersRelations = relations(partners, ({ many }) => ({
   stockMovements: many(stockMovements),
   expenses: many(expenses),
   cashTransactions: many(cashTransactions),
+  smsLogs: many(smsLogs),
 }));
 
 export const cashTransactionsRelations = relations(cashTransactions, ({ one }) => ({
   partner: one(partners, {
     fields: [cashTransactions.partnerId],
+    references: [partners.id],
+  }),
+}));
+
+export const smsLogsRelations = relations(smsLogs, ({ one }) => ({
+  partner: one(partners, {
+    fields: [smsLogs.partnerId],
     references: [partners.id],
   }),
 }));

@@ -4,12 +4,11 @@ import {
   ArrowLeftRight,
   ShoppingCart,
   History,
+  MessageSquare,
   Users,
   Warehouse,
   Wallet,
   Receipt,
-  CircleDollarSign,
-  HandCoins,
   type LucideIcon,
 } from "lucide-react";
 
@@ -24,9 +23,9 @@ export type NavGroup = {
   items: NavItem[];
 };
 
-// Sidebarda aynan 4 ta bo'lim (Kassa/Ombor/Savdo/Arxiv) - foydalanuvchi
+// Sidebarda 5 ta bo'lim (Kassa/Ombor/Savdo/Arxiv/SMS) - foydalanuvchi
 // so'roviga ko'ra. Kassa/Ombor/Savdo ko'p sahifali - ular ichidagi
-// bo'limlar (masalan Kassa ostida: Amaliyotlari, Savdolar, Hamkorlar) sidebarda o'sha guruh ichiga joylashtirilib (yoyilib/
+// bo'limlar (masalan Kassa ostida: Amaliyotlari, Hamkorlar) sidebarda o'sha guruh ichiga joylashtirilib (yoyilib/
 // yig'ilib turadigan) ko'rsatiladi. Arxiv - bitta sahifali, shuning uchun
 // oddiy alohida havola sifatida ko'rinadi.
 export const navGroups: NavGroup[] = [
@@ -35,8 +34,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "Kassa", href: "/", icon: Wallet },
       { label: "Amaliyotlari", href: "/kassa/amaliyotlari", icon: Receipt },
-      { label: "Savdolar", href: "/kassa/savdolar", icon: CircleDollarSign },
-      { label: "Hamkorlar", href: "/kassa/hamkorlar", icon: HandCoins },
+      { label: "Hamkorlar", href: "/kassa/hamkorlar", icon: Users },
     ],
   },
   {
@@ -59,15 +57,21 @@ export const navGroups: NavGroup[] = [
     title: "Arxiv",
     items: [{ label: "Arxiv", href: "/arxiv", icon: Archive }],
   },
+  {
+    title: "SMS",
+    items: [{ label: "SMS", href: "/sms", icon: MessageSquare }],
+  },
 ];
 
 // Barcha bo'limlarning tekis ro'yxati - joriy sahifa sarlavhasini topish
 // (mobil header) kabi holatlar uchun.
 export const navItems: NavItem[] = navGroups.flatMap((g) => g.items);
 
+// Mobil pastki tab-bar: 5 ta band, 375px da har biri ~75px - yorliqlar qisqa.
 export const mobileQuickNav: NavItem[] = [
   { label: "Kassa", href: "/", icon: Wallet },
-  { label: "Mahsulotlar", href: "/ombor/mahsulotlar", icon: Package },
-  { label: "Savdo", href: "/savdo/yangi", icon: ShoppingCart },
+  { label: "Amaliyotlar", href: "/kassa/amaliyotlari", icon: Receipt },
+  { label: "Yangi savdo", href: "/savdo/yangi", icon: ShoppingCart },
   { label: "Hamkorlar", href: "/savdo/hamkorlar", icon: Users },
+  { label: "Mahsulotlar", href: "/ombor/mahsulotlar", icon: Package },
 ];

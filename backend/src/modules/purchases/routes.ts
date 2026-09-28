@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createPurchase, updatePurchase, listPurchases, getPurchase, cancelPurchase } from "./service";
+import { parseDateParam } from "../../utils/date";
 import { requireAuth } from "../../middleware/auth";
 
 const cancelSchema = z.object({ reason: z.string().nullable().optional() });
@@ -36,8 +37,8 @@ purchaseRoutes.get("/", async (c) => {
   const rows = await listPurchases({
     partnerId: partnerId || undefined,
     paymentStatus: (paymentStatus as "paid" | "partial" | "credit" | "cancelled") || undefined,
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+    from: parseDateParam(from),
+    to: parseDateParam(to, { endOfDay: true }),
   });
   return c.json(rows);
 });

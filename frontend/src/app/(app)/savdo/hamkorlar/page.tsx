@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Plus,
+  Banknote,
   Pencil,
   Trash2,
   Users,
@@ -38,9 +39,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { PaymentFormDialog } from "@/components/payment-form-dialog";
+import { CashTransactionFormDialog } from "@/components/cash-transaction-form-dialog";
 import { BalanceBadge } from "@/components/balance-badge";
 import { ExcelActions } from "@/components/excel-actions";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { api, apiUrl, ApiError } from "@/lib/api";
 import type { Partner } from "@/lib/types";
@@ -55,12 +62,24 @@ export default function PartnersPage() {
 
   const partners = useMemo(() => data ?? [], [data]);
   // Qidiruv (ism/telefon/tur) + sahifalash; jami qator BARCHA filtrlangan qatorlardan hisoblanadi.
-  const view = useTableView(partners, (p) => `${p.name} ${p.phone ?? ""} ${partnerTypeLabels[p.type]}`);
+  const view = useTableView(
+    partners,
+    (p) => `${p.name} ${p.phone ?? ""} ${partnerTypeLabels[p.type]}`,
+    20,
+    // Saralanadigan ustunlar: nom, tur, balans
+    {
+      name: (p) => p.name,
+      type: (p) => partnerTypeLabels[p.type],
+      balance: (p) => p.balanceUzs,
+    }
+  );
   const totalBalance = view.filtered.reduce((sum, p) => sum + p.balanceUzs, 0);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Partner | null>(null);
   const [paymentTarget, setPaymentTarget] = useState<Partner | null>(null);
+  // Hamkorga pul o'tkazish (kassadan chiqim) - avval /kassa/hamkorlar da edi
+  const [transferTarget, setTransferTarget] = useState<Partner | null>(null);
   const [deleting, setDeleting] = useState<Partner | null>(null);
 
   const deleteMutation = useMutation({
@@ -113,15 +132,19 @@ export default function PartnersPage() {
         </Card>
       ) : (
         <>
+          <MobileSortSelect
+            view={view}
+            options={[{ key: "name", label: "Nomi" }, { key: "type", label: "Turi" }, { key: "balance", label: "Balans" }]}
+          />
           <Card className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Ismi / nomi</TableHead>
-                  <TableHead>Turi</TableHead>
+                  <SortableHead label="Ismi / nomi" sortKey="name" view={view} />
+                  <SortableHead label="Turi" sortKey="type" view={view} />
                   <TableHead>Telefon</TableHead>
-                  <TableHead>Balans</TableHead>
-                  <TableHead className="w-32"></TableHead>
+                  <SortableHead label="Balans" sortKey="balance" view={view} />
+                  <TableHead className="w-56"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -160,6 +183,14 @@ export default function PartnersPage() {
                           onClick={() => setPaymentTarget(p)}
                         >
                           <Wallet className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Pul o'tkazish"
+                          onClick={() => setTransferTarget(p)}
+                        >
+                          <Banknote className="h-4 w-4" />
                         </Button>
                         <a
                           href={apiUrl(`/excel/partners/${p.id}/statement`)}
@@ -209,7 +240,7 @@ export default function PartnersPage() {
                       </Link>
                       <p className="text-sm text-muted-foreground">{partnerTypeLabels[p.type]}</p>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap justify-end gap-1">
                       <Link
                         href={`/savdo/hamkorlar/${p.id}`}
                         title="Tarix"
@@ -226,6 +257,14 @@ export default function PartnersPage() {
                       </Link>
                       <Button variant="ghost" size="icon" onClick={() => setPaymentTarget(p)}>
                         <Wallet className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Pul o'tkazish"
+                        onClick={() => setTransferTarget(p)}
+                      >
+                        <Banknote className="h-4 w-4" />
                       </Button>
                       <a
                         href={apiUrl(`/excel/partners/${p.id}/statement`)}
@@ -268,10 +307,18 @@ export default function PartnersPage() {
             total={view.total}
             pageSize={view.pageSize}
             onPageChange={view.setPage}
+            onPageSizeChange={view.setPageSize}
           />
         </>
       )}
 
+      <CashTransactionFormDialog
+        direction="out"
+        open={!!transferTarget}
+        onOpenChange={(o) => !o && setTransferTarget(null)}
+        initialPartnerId={transferTarget?.id}
+        title={transferTarget ? `"${transferTarget.name}"ga pul o'tkazish` : undefined}
+      />
       <PartnerFormDialog partner={editing} open={formOpen} onOpenChange={setFormOpen} />
       {paymentTarget && (
         <PaymentFormDialog

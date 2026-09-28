@@ -38,7 +38,12 @@ import {
 import { MovementFormDialog } from "@/components/movement-form-dialog";
 import { TransferFormDialog } from "@/components/transfer-form-dialog";
 import { ExcelActions } from "@/components/excel-actions";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { StockMovement, Product, Warehouse } from "@/lib/types";
@@ -125,7 +130,17 @@ export default function StockMovementsPage() {
   const view = useTableView(
     visibleData,
     (m) =>
-      `${productName(m.productId)} ${warehouseName(m.warehouseId)} ${m.vehicleNumber ?? ""} ${m.note ?? ""} ${movementTypeLabels[m.type]}`
+      `${productName(m.productId)} ${warehouseName(m.warehouseId)} ${m.vehicleNumber ?? ""} ${m.note ?? ""} ${movementTypeLabels[m.type]}`,
+    20,
+    // Saralanadigan ustunlar: sana, mahsulot, ombor, miqdor (kg), narx, umumiy summa
+    {
+      date: (m) => Date.parse(m.movementDate),
+      product: (m) => productName(m.productId),
+      warehouse: (m) => warehouseName(m.warehouseId),
+      qty: (m) => Number(m.quantity) * (productUnit(m.productId) === "ton" ? 1000 : 1),
+      price: (m) => (m.pricePerUnit === null ? null : Number(m.pricePerUnit)),
+      total: (m) => (m.pricePerUnit === null ? null : Number(m.pricePerUnit) * Number(m.quantity)),
+    }
   );
   // Jami qator (qidiruvdan o'tgan barcha qatorlar): miqdor kg'da (1 t = 1000 kg),
   // summa esa valyuta bo'yicha alohida (UZS va USD aralashtirilmaydi).
@@ -244,18 +259,22 @@ export default function StockMovementsPage() {
         </Card>
       ) : (
         <>
+          <MobileSortSelect
+            view={view}
+            options={[{ key: "date", label: "Sana" }, { key: "product", label: "Mahsulot" }, { key: "warehouse", label: "Ombor" }, { key: "qty", label: "Miqdor" }, { key: "price", label: "Narxi" }, { key: "total", label: "Umumiy" }]}
+          />
           <Card className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Sana</TableHead>
+                  <SortableHead label="Sana" sortKey="date" view={view} />
                   <TableHead>Turi</TableHead>
-                  <TableHead>Mahsulot</TableHead>
-                  <TableHead>Ombor</TableHead>
+                  <SortableHead label="Mahsulot" sortKey="product" view={view} />
+                  <SortableHead label="Ombor" sortKey="warehouse" view={view} />
                   <TableHead>Mashina raqami</TableHead>
-                  <TableHead>Miqdor</TableHead>
-                  <TableHead>Narxi</TableHead>
-                  <TableHead className="text-right">Umumiy</TableHead>
+                  <SortableHead label="Miqdor" sortKey="qty" view={view} />
+                  <SortableHead label="Narxi" sortKey="price" view={view} />
+                  <SortableHead label="Umumiy" sortKey="total" view={view} align="right" />
                   <TableHead>Izoh</TableHead>
                   <TableHead className="w-16"></TableHead>
                 </TableRow>
@@ -388,6 +407,7 @@ export default function StockMovementsPage() {
             total={view.total}
             pageSize={view.pageSize}
             onPageChange={view.setPage}
+            onPageSizeChange={view.setPageSize}
           />
         </>
       )}

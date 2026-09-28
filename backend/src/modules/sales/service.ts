@@ -2,7 +2,6 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "../../db";
 import { products, sales, saleItems, stockMovements, payments } from "../../db/schema";
 import { getCurrentRate } from "../settings/service";
-import { assertDayOpenForSales } from "../day-closings/service";
 import {
   adjustWarehouseStock,
   recomputeProductAggregate,
@@ -10,6 +9,8 @@ import {
   recordConsumptions,
   reverseConsumptions,
 } from "../stock/service";
+import { sendSingleSms, formatSmsAmount } from "../sms/service";
+import { getPartner } from "../partners/service";
 
 type SaleItemInput = {
   productId: string;
@@ -31,6 +32,10 @@ type CreateSaleInput = {
   initialPayment?: number | null; // sale.currency birligida, savdo yaratilishi bilanoq to'langan summa
   paymentMethod?: "cash" | "card" | "bank";
   notes?: string | null;
+  // Savdo saqlangach hamkorga avtomatik SMS yuborilsinmi - standart true
+  // (frontenddagi "Yangi savdo" formasidagi checkbox shu yerga bog'lanadi).
+  // Faqat YANGI savdoda ishlatiladi (tahrirlashda hisobga olinmaydi).
+  notifyPartnerBySms?: boolean;
 };
 
 function paymentStatusFor(paidUzs: number, totalUzs: number): "paid" | "partial" | "credit" {
@@ -46,11 +51,13 @@ function paymentStatusFor(paidUzs: number, totalUzs: number): "paid" | "partial"
  */
 export async function createSale(input: CreateSaleInput) {
   if (input.items.length === 0) throw new Error("Savdoda kamida bitta mahsulot bo'lishi kerak");
-  await assertDayOpenForSales();
 
   const rate = await getCurrentRate();
+  // SMS matni uchun ("... yukingiz uchun rahmat") - tranzaksiya ichida
+  // mahsulot nomlari bilan to'ldiriladi, savdo saqlangandan keyin ishlatiladi.
+  const smsItemLines: string[] = [];
 
-  return db.transaction(async (tx) => {
+  const sale = await db.transaction(async (tx) => {
     let totalAmount = 0; // mahsulotlar summasi, savdo valyutasida (yuk pulisiz)
     let freightTotalUzs = 0; // barcha qatorlar bo'yicha yuk puli yig'indisi (doim UZS)
 
@@ -96,6 +103,8 @@ export async function createSale(input: CreateSaleInput) {
       const freightCostUzs = item.freightCostUzs ?? 0;
       totalAmount += subtotal;
       freightTotalUzs += freightCostUzs;
+
+      smsItemLines.push(`${product.name} (${item.quantity} ${product.unit === "ton" ? "t" : "kg"})`);
 
       itemRows.push({
         productId: item.productId,
@@ -172,11 +181,46 @@ export async function createSale(input: CreateSaleInput) {
         exchangeRateSnapshot: String(rate),
         amountUzs: String(paidAmountUzs),
         method: input.paymentMethod ?? "cash",
+        // The initial payment is dated at the sale date (not "now"), so back-dated
+        // sales show their payment on the correct day in ledgers and reports.
+        paymentDate: sale.saleDate,
       });
     }
 
     return sale;
   });
+
+  // Tranzaksiyadan TASHQARIDA (savdo allaqachon saqlangan) - SMS yuborish
+  // xato bersa ham (TextUP ishlamasa, balans tugagan bo'lsa va h.k.) savdo
+  // baribir saqlangan bo'lib qoladi, hech qachon savdo yaratishni buzmaydi.
+  if (input.notifyPartnerBySms !== false) {
+    try {
+      await notifySaleBySms(sale, smsItemLines);
+    } catch (err) {
+      console.error("Savdo haqida SMS yuborishda xato:", err);
+    }
+  }
+
+  return sale;
+}
+
+/**
+ * Yangi savdo saqlangach hamkorga "yukingiz uchun rahmat" SMS'ini yuboradi
+ * (telefon raqami bo'lsa). Xabar summani (shu savdo) va hamkorning JORIY
+ * (savdo hisobga olingan holdagi) balansini o'z ichiga oladi. Mavjud
+ * `sendSingleSms()` (SMS modulidan) orqali yuboriladi - shu bilan ichki SMS
+ * balansi tekshiruvi, tarix yozuvi va xato/refund mantig'i avtomatik
+ * qo'llaniladi (dublikat kod yozilmagan).
+ */
+async function notifySaleBySms(sale: typeof sales.$inferSelect, itemLines: string[]) {
+  const partner = await getPartner(sale.partnerId);
+  if (!partner?.phone) return; // telefon raqami yo'q - majburiy emas, jim o'tkazib yuboriladi
+
+  const itemsText = itemLines.length ? itemLines.join(", ") : "yuk";
+  const phoneDigits = partner.phone.replace(/\D/g, "");
+  const message = `Dona Don Group: Hurmatli ${partner.name} aka, ${itemsText} yukingiz uchun rahmat! Summa: ${formatSmsAmount(Number(sale.totalAmountUzs))} som. Ortamizdagi hisob: ${formatSmsAmount(partner.balanceUzs)} som. Tel:+${phoneDigits}`;
+
+  await sendSingleSms({ id: partner.id, name: partner.name, phone: partner.phone }, message);
 }
 
 /**
@@ -299,6 +343,21 @@ export async function updateSale(id: string, input: CreateSaleInput) {
       .where(eq(sales.id, id))
       .returning();
     if (!updated) throw new Error("Savdoni yangilab bo'lmadi");
+
+    // Keep the initial payment's date in sync with the sale date: the initial
+    // payment is the first payment created together with the sale (within a
+    // minute of the sale's creation). Later payments are left untouched.
+    if (input.saleDate) {
+      const [initial] = await tx
+        .select()
+        .from(payments)
+        .where(eq(payments.saleId, id))
+        .orderBy(payments.createdAt)
+        .limit(1);
+      if (initial && Math.abs(initial.createdAt.getTime() - existing.createdAt.getTime()) < 60_000) {
+        await tx.update(payments).set({ paymentDate: updated.saleDate }).where(eq(payments.id, initial.id));
+      }
+    }
 
     for (const row of itemRows) {
       const { consumptions, ...values } = row;

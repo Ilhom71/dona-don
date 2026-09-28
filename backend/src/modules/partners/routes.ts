@@ -11,6 +11,7 @@ import {
   getPartnerLedger,
 } from "./service";
 import { requireAuth } from "../../middleware/auth";
+import { parseDateParam } from "../../utils/date";
 
 const partnerSchema = z.object({
   name: z.string().min(1),
@@ -25,7 +26,11 @@ export const partnerRoutes = new Hono();
 partnerRoutes.use("*", requireAuth);
 
 partnerRoutes.get("/", async (c) => {
-  return c.json(await listPartnersWithBalance());
+  // Ixtiyoriy `asOf` (YYYY-MM-DD) - berilsa, balans o'sha sanagacha (kun
+  // oxirigacha) hisoblanadi - Kassa amaliyotlari sahifasidagi sana filtri
+  // uchun ("o'sha paytda qarz qancha edi").
+  const asOfDate = parseDateParam(c.req.query("asOf"), { endOfDay: true });
+  return c.json(await listPartnersWithBalance({ asOfDate }));
 });
 
 // "/:id" dan oldin ro'yxatdan o'tkazilishi shart, aks holda "archived" ":id"

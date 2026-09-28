@@ -32,11 +32,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { KassaSubNav } from "@/components/kassa-subnav";
 import { StatCard } from "@/components/stat-card";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { api, ApiError } from "@/lib/api";
 import type { Sale } from "@/lib/types";
-import { formatDate, formatMoney, paymentStatusLabels } from "@/lib/format";
+import { formatDate, formatMoney, formatMoneyCompact, paymentStatusLabels } from "@/lib/format";
 
 const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   paid: "default",
@@ -71,7 +76,16 @@ export default function KassaSalesPage() {
   const active = useMemo(() => (data ?? []).filter((s) => !s.cancelledAt), [data]);
   const view = useTableView(
     active,
-    (s) => `${s.partner?.name ?? ""} ${s.vehicleNumber ?? ""} ${paymentStatusLabels[s.paymentStatus]} ${formatDate(s.saleDate)}`
+    (s) => `${s.partner?.name ?? ""} ${s.vehicleNumber ?? ""} ${paymentStatusLabels[s.paymentStatus]} ${formatDate(s.saleDate)}`,
+    20,
+    // Saralanadigan ustunlar: sana, hamkor, summa, to'langan, qoldiq
+    {
+      date: (s) => Date.parse(s.saleDate),
+      partner: (s) => s.partner?.name,
+      total: (s) => Number(s.totalAmountUzs),
+      paid: (s) => Number(s.paidAmountUzs),
+      rest: (s) => Number(s.totalAmountUzs) - Number(s.paidAmountUzs),
+    }
   );
   // Jadval ostidagi "Jami" qatori - qidiruvdan o'tgan barcha qatorlar bo'yicha.
   const tableTotal = view.filtered.reduce((sum, s) => sum + Number(s.totalAmountUzs), 0);
@@ -131,17 +145,19 @@ export default function KassaSalesPage() {
         placeholder="Hamkor, mashina yoki holat bo'yicha qidirish..."
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Jami savdo" value={formatMoney(totalUzs)} icon={ShoppingCart} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatCard label="Jami savdo" value={formatMoneyCompact(totalUzs)} hint={formatMoney(totalUzs)} icon={ShoppingCart} />
         <StatCard
           label="Jami to'langan"
-          value={formatMoney(paidUzs)}
+          value={formatMoneyCompact(paidUzs)}
+          hint={formatMoney(paidUzs)}
           icon={TrendingUp}
           tone="success"
         />
         <StatCard
           label="Jami qarz"
-          value={formatMoney(debtUzs)}
+          value={formatMoneyCompact(debtUzs)}
+          hint={formatMoney(debtUzs)}
           icon={Wallet}
           tone={debtUzs > 0 ? "warning" : "default"}
         />
@@ -157,16 +173,20 @@ export default function KassaSalesPage() {
         </Card>
       ) : (
         <>
+          <MobileSortSelect
+            view={view}
+            options={[{ key: "date", label: "Sana" }, { key: "partner", label: "Hamkor" }, { key: "total", label: "Summa" }, { key: "paid", label: "To'langan" }, { key: "rest", label: "Qoldiq" }]}
+          />
           <Card className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Sana</TableHead>
-                  <TableHead>Hamkor</TableHead>
+                  <SortableHead label="Sana" sortKey="date" view={view} />
+                  <SortableHead label="Hamkor" sortKey="partner" view={view} />
                   <TableHead>Valyuta</TableHead>
-                  <TableHead className="text-right">Summa</TableHead>
-                  <TableHead className="text-right">To&apos;langan</TableHead>
-                  <TableHead className="text-right">Qoldiq</TableHead>
+                  <SortableHead label="Summa" sortKey="total" view={view} align="right" />
+                  <SortableHead label="To'langan" sortKey="paid" view={view} align="right" />
+                  <SortableHead label="Qoldiq" sortKey="rest" view={view} align="right" />
                   <TableHead>Holati</TableHead>
                   <TableHead className="w-16"></TableHead>
                 </TableRow>
@@ -272,6 +292,7 @@ export default function KassaSalesPage() {
             total={view.total}
             pageSize={view.pageSize}
             onPageChange={view.setPage}
+            onPageSizeChange={view.setPageSize}
           />
         </>
       )}

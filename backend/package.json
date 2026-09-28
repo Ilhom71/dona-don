@@ -7,6 +7,7 @@
     "dev": "bun run --hot src/index.ts",
     "start": "bun run src/index.ts",
     "seed": "bun run src/db/seed.ts",
+    "sms-admin:set": "bun run src/db/set-sms-admin.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate && bun run src/db/backfill-stock-lots.ts",
     "db:studio": "drizzle-kit studio"

@@ -7,6 +7,7 @@ import { ChevronDown, Menu, LogOut } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { navGroups, navItems } from "./nav-items";
+import { PwaInstallButton } from "./pwa-install-button";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
@@ -125,13 +126,16 @@ export function AppHeader() {
                 </div>
               );
             })}
-            <button
-              onClick={() => logout()}
-              className="mt-3 flex w-full items-center gap-3 rounded-md border-t px-3 pt-4 pb-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <LogOut className="h-4 w-4" />
-              Chiqish
-            </button>
+            <div className="mt-3 flex items-center gap-2 border-t pt-3">
+              <PwaInstallButton />
+              <button
+                onClick={() => logout()}
+                className="flex flex-1 items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <LogOut className="h-4 w-4" />
+                Chiqish
+              </button>
+            </div>
           </nav>
         </SheetContent>
       </Sheet>

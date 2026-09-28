@@ -7,12 +7,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Plus, Trash2, Truck } from "lucide-react";
+import { MessageSquare, Plus, Trash2, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -23,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { PartnerFormDialog } from "@/components/partner-form-dialog";
 import { api, ApiError } from "@/lib/api";
-import type { Partner, Product, Sale, Warehouse, ProductStock, StockLot, DayStatus } from "@/lib/types";
+import type { Partner, Product, Sale, Warehouse, ProductStock, StockLot } from "@/lib/types";
 import { formatDate, formatMoney, formatQuantity, toDateInputValue } from "@/lib/format";
 
 const itemSchema = z.object({
@@ -47,6 +48,8 @@ const schema = z.object({
   initialPayment: z.string().optional(),
   paymentMethod: z.enum(["cash", "card", "bank"]),
   notes: z.string().optional(),
+  // Faqat yangi savdoda ishlatiladi (tahrirlashda mijozga qayta SMS yuborilmaydi).
+  notifyPartnerBySms: z.boolean(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -96,14 +99,6 @@ function NewSaleForm() {
     queryFn: () => api.get<Sale>(`/sales/${editId}`),
     enabled: isEdit,
   });
-  // Yangi savdo yaratish kun ochilishini talab qiladi (tahrirlashga
-  // taalluqli emas) - Kassa bosh sahifasidagi "Kun holati" bilan bir xil.
-  const { data: dayStatus } = useQuery({
-    queryKey: ["day-status"],
-    queryFn: () => api.get<DayStatus>("/day-closings/status"),
-    enabled: !isEdit,
-  });
-  const dayBlocked = !isEdit && dayStatus && !dayStatus.canSell;
 
   const {
     register,
@@ -127,6 +122,7 @@ function NewSaleForm() {
       initialPayment: "",
       paymentMethod: "cash",
       notes: "",
+      notifyPartnerBySms: true,
     },
   });
 
@@ -134,6 +130,8 @@ function NewSaleForm() {
   const items = watch("items");
   const currency = watch("currency");
   const warehouseId = watch("warehouseId");
+  const selectedPartnerId = watch("partnerId");
+  const selectedPartner = partners?.find((p) => p.id === selectedPartnerId);
 
   // Faqat bitta ombor bo'lsa, avtomatik tanlab qo'yamiz.
   useEffect(() => {
@@ -162,6 +160,7 @@ function NewSaleForm() {
         initialPayment: "",
         paymentMethod: "cash",
         notes: editingSale.notes ?? "",
+        notifyPartnerBySms: false,
       });
     }
   }, [editingSale, reset]);
@@ -235,6 +234,7 @@ function NewSaleForm() {
             ...payload,
             initialPayment: values.initialPayment ? Number(values.initialPayment) : null,
             paymentMethod: values.paymentMethod,
+            notifyPartnerBySms: values.notifyPartnerBySms,
           });
     },
     onSuccess: (sale) => {
@@ -247,6 +247,12 @@ function NewSaleForm() {
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
       queryClient.invalidateQueries({ queryKey: ["stock-lots"] });
+      // Yangi savdoda hamkorga SMS yuborilgan bo'lishi mumkin - balans/tarix yangilansin.
+      if (!isEdit) {
+        queryClient.invalidateQueries({ queryKey: ["sms-balance"] });
+        queryClient.invalidateQueries({ queryKey: ["sms-logs"] });
+        queryClient.invalidateQueries({ queryKey: ["sms-stats"] });
+      }
       router.push(`/savdo/tarix/${sale.id}`);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : "Xatolik yuz berdi"),
@@ -260,17 +266,6 @@ function NewSaleForm() {
           {isEdit ? "Miqdor, narx va boshqa ma'lumotlarni o'zgartirish" : "Mijozga don sotish"}
         </p>
       </div>
-
-      {dayBlocked && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            {dayStatus?.closed
-              ? "Bugungi kun yopilgan - savdo qilish uchun avval Kassa sahifasidan kunni qayta oching."
-              : "Bugungi kun hali ochilmagan - savdo qilish uchun avval Kassa sahifasidan kunni oching."}
-          </p>
-        </div>
-      )}
 
       <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
         <Card>
@@ -637,11 +632,38 @@ function NewSaleForm() {
                 <Label htmlFor="notes">Izoh</Label>
                 <Textarea id="notes" {...register("notes")} />
               </div>
+              <div className="sm:col-span-2">
+                <Controller
+                  control={control}
+                  name="notifyPartnerBySms"
+                  render={({ field }) => (
+                    <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={field.value}
+                        disabled={!selectedPartner?.phone}
+                        onCheckedChange={(checked) => field.onChange(checked === true)}
+                      />
+                      <span className="space-y-0.5 text-sm">
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          Hamkorga SMS yuborilsin
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {selectedPartner && !selectedPartner.phone
+                            ? "Hamkorning telefon raqami kiritilmagan - SMS yuborilmaydi"
+                            : "Savdo saqlangach \"yukingiz uchun rahmat\" xabari (mahsulot, summa va joriy hisob bilan) avtomatik yuboriladi (SMS balansidan sarflanadi)"}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                />
+              </div>
             </CardContent>
           </Card>
         )}
 
-        <Button type="submit" size="lg" className="w-full" disabled={mutation.isPending || dayBlocked}>
+        <Button type="submit" size="lg" className="w-full" disabled={mutation.isPending}>
           {mutation.isPending ? "Saqlanmoqda..." : isEdit ? "O'zgarishlarni saqlash" : "Savdoni saqlash"}
         </Button>
       </form>

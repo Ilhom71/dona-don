@@ -9,6 +9,7 @@ import {
   cancelMovement,
   restoreMovement,
 } from "./service";
+import { parseDateParam } from "../../utils/date";
 import { requireAuth } from "../../middleware/auth";
 
 const cancelSchema = z.object({ reason: z.string().nullable().optional() });
@@ -45,8 +46,8 @@ stockRoutes.get("/movements", async (c) => {
     productId: productId || undefined,
     type: (type as "in" | "out") || undefined,
     warehouseId: warehouseId || undefined,
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+    from: parseDateParam(from),
+    to: parseDateParam(to, { endOfDay: true }),
   });
   return c.json(movements);
 });

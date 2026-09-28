@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Download, FileSpreadsheet, Upload } from "lucide-react";
+import { Download, FileSpreadsheet, TriangleAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ export function ExcelActions({
   importPath,
   templatePath,
   invalidateKey,
+  importWarning,
 }: {
   exportPath: string;
   exportFileName: string;
@@ -21,6 +22,8 @@ export function ExcelActions({
   // (bitta namuna qator bilan) - faqat importPath berilganda ma'noli.
   templatePath?: string;
   invalidateKey?: string | string[];
+  // Import tugmasi yonida ko'rsatiladigan qisqa ogohlantirish (masalan dublikat xavfi haqida).
+  importWarning?: string;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -50,8 +53,20 @@ export function ExcelActions({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const result = await api.post<{ created: number; updated: number }>(importPath, formData);
+      const result = await api.post<{ created: number; updated: number; errors?: string[] }>(
+        importPath,
+        formData
+      );
       toast.success(`Import tugadi: ${result.created} ta yangi, ${result.updated} ta yangilandi`);
+      // Ba'zi qatorlar o'tkazib yuborilgan bo'lsa (masalan hamkor topilmadi) - sabablari alohida ko'rsatiladi.
+      if (result.errors && result.errors.length > 0) {
+        const shown = result.errors.slice(0, 5).join("\n");
+        const more = result.errors.length > 5 ? `\n... va yana ${result.errors.length - 5} ta` : "";
+        toast.warning(`${result.errors.length} ta qatorda xatolik`, {
+          description: shown + more,
+          duration: 15000,
+        });
+      }
       for (const key of invalidateKey ? [invalidateKey].flat() : []) {
         queryClient.invalidateQueries({ queryKey: [key] });
       }
@@ -64,6 +79,7 @@ export function ExcelActions({
   }
 
   return (
+    <div className="flex flex-col gap-1.5 sm:items-end">
     <div className="flex flex-wrap items-center gap-2">
       <Button
         variant="outline"
@@ -107,6 +123,13 @@ export function ExcelActions({
           />
         </>
       )}
+    </div>
+    {importPath && importWarning && (
+      <p className="flex max-w-md items-start gap-1 text-xs text-amber-700 dark:text-amber-400">
+        <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {importWarning}
+      </p>
+    )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { listSales } from "../sales/service";
 import { listPurchases } from "../purchases/service";
 import { getPartner, getPartnerLedger, listPartnersWithBalance } from "../partners/service";
 import { getCashLedger } from "../cash/service";
+import { formatTashkentDate, formatTashkentDateTime } from "../../utils/date";
 
 const HEADER_FILL: ExcelJS.Fill = {
   type: "pattern",
@@ -149,7 +150,7 @@ export async function exportSales(ids?: string[]) {
     totalPaidUzs += Number(r.paidAmountUzs);
     const row = ws.addRow({
       no: i + 1,
-      saleDate: r.saleDate.toISOString().slice(0, 10),
+      saleDate: formatTashkentDate(r.saleDate),
       partner: r.partner?.name ?? "",
       warehouse: r.warehouse?.name ?? "",
       vehicleNumber: r.vehicleNumber ?? "",
@@ -213,7 +214,7 @@ export async function exportPurchases(ids?: string[]) {
     totalPaidUzs += Number(r.paidAmountUzs);
     const row = ws.addRow({
       no: i + 1,
-      purchaseDate: r.purchaseDate.toISOString().slice(0, 10),
+      purchaseDate: formatTashkentDate(r.purchaseDate),
       partner: r.partner?.name ?? "",
       warehouse: r.warehouse?.name ?? "",
       vehicleNumber: r.vehicleNumber ?? "",
@@ -281,7 +282,7 @@ export async function exportStockMovements() {
     totalSum += total;
     const row = ws.addRow({
       no: i + 1,
-      movementDate: r.movementDate.toISOString().slice(0, 10),
+      movementDate: formatTashkentDate(r.movementDate),
       type: r.type === "in" ? "Kirim" : "Chiqim",
       productName: r.product?.name ?? "",
       warehouseName: r.warehouse?.name ?? "",
@@ -368,7 +369,7 @@ export async function exportPartnerStatement(partnerId: string) {
       : `${LEDGER_KIND_LABELS[r.kind]} (${r.paymentMethod ?? "cash"})`;
     const row = ws.addRow({
       no: i + 1,
-      date: new Date(r.date).toISOString().slice(0, 10),
+      date: formatTashkentDate(new Date(r.date)),
       type: LEDGER_KIND_LABELS[r.kind] ?? r.kind,
       description,
       vehicleNumber: r.vehicleNumber ?? "",
@@ -399,6 +400,7 @@ const CASH_CATEGORY_LABELS: Record<string, string> = {
   utilities: "Kommunal xizmatlar",
   other: "Boshqa",
   manual: "Qo'lda kiritilgan",
+  funding: "Pul olib turish",
 };
 
 /** Kassaning to'liq harakati (mijozdan to'lov + xarajatlar + qo'lda yozuvlar), yuguruvchi qoldiq bilan. */
@@ -428,8 +430,17 @@ export async function exportCashLedger() {
     else totalOut += r.amountUzs;
     const row = ws.addRow({
       no: i + 1,
-      date: new Date(r.date).toISOString().slice(0, 16).replace("T", " "),
-      direction: CASH_DIRECTION_LABELS[r.direction] ?? r.direction,
+      date: formatTashkentDateTime(new Date(r.date)),
+      // Xarajat (supplier_payment'dan tashqari) - qaytmas chiqim; "Pul olib
+      // turish" (funding) - alohida yorliq, UI'dagi kabi bir xil bo'lishi uchun.
+      direction:
+        r.source === "expense" && r.category !== "supplier_payment"
+          ? "Qaytmas chiqim"
+          : r.purpose === "funding"
+            ? r.direction === "in"
+              ? "Pul olib turish"
+              : "Pulni qaytarish"
+            : (CASH_DIRECTION_LABELS[r.direction] ?? r.direction),
       category: CASH_CATEGORY_LABELS[r.category] ?? r.category,
       partner: r.partnerName ?? "",
       method: CASH_METHOD_LABELS[r.method] ?? r.method,
@@ -494,7 +505,7 @@ export async function exportExpensesTemplate() {
     { header: "Tavsif", key: "description", width: 30 },
   ];
   ws.addRow({
-    date: new Date().toISOString().slice(0, 10),
+    date: formatTashkentDate(new Date()),
     category: "Ish haqi",
     partner: "",
     amount: 500000,
@@ -561,5 +572,68 @@ export async function exportPartners() {
   styleDataRows(ws, 3, ws.rowCount);
   const totalsRow = addTotalsRow(ws, ["", "Jami", "", "", "", "", totalOwedToMe, totalIOwe, totalBalance]);
   [7, 8, 9].forEach((c) => (totalsRow.getCell(c).numFmt = "#,##0"));
+  return toBuffer(wb);
+}
+
+/**
+ * Kassa import shabloni - ustunlar aynan `exportCashLedger` chiqargan va
+ * `importCashLedger` kutgan tartibda (eksport qilingan fayl qayta yuklanadi).
+ */
+export async function exportCashTemplate() {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Kassa");
+  ws.columns = [
+    { header: "№", key: "no", width: 5 },
+    { header: "Sana", key: "date", width: 16 },
+    { header: "Yo'nalish", key: "direction", width: 16 },
+    { header: "Kategoriya", key: "category", width: 18 },
+    { header: "Hamkor", key: "partner", width: 22 },
+    { header: "Usuli", key: "method", width: 12 },
+    { header: "Tavsif", key: "description", width: 30 },
+    { header: "Kirim (so'm)", key: "inUzs", width: 16 },
+    { header: "Chiqim (so'm)", key: "outUzs", width: 16 },
+    { header: "Qoldiq (so'm)", key: "balanceUzs", width: 16 },
+  ];
+  // Sample rows: direction must be Kirim / Chiqim / Qaytmas chiqim / Pul olib
+  // turish / Pulni qaytarish. "Pul olib turish" va "Pulni qaytarish" satrlarida
+  // Hamkor ustuni har doim bo'sh bo'lishi kerak (hamkorga bog'lanmaydi).
+  ws.addRow({
+    no: 1,
+    date: formatTashkentDateTime(new Date()),
+    direction: "Kirim",
+    category: "Qo'lda kiritilgan",
+    partner: "",
+    method: "Naqd",
+    description: "Namuna: kassaga pul qo'shildi",
+    inUzs: 1000000,
+    outUzs: null,
+    balanceUzs: null,
+  });
+  ws.addRow({
+    no: 2,
+    date: formatTashkentDateTime(new Date()),
+    direction: "Qaytmas chiqim",
+    category: "Boshqa",
+    partner: "",
+    method: "Naqd",
+    description: "Namuna: benzin",
+    inUzs: null,
+    outUzs: 130000,
+    balanceUzs: null,
+  });
+  ws.addRow({
+    no: 3,
+    date: formatTashkentDateTime(new Date()),
+    direction: "Pul olib turish",
+    category: "Pul olib turish",
+    partner: "",
+    method: "Naqd",
+    description: "Namuna: kassani to'ldirish uchun pul kiritildi",
+    inUzs: 500000,
+    outUzs: null,
+    balanceUzs: null,
+  });
+  styleSheet(ws, "Kassa - import shabloni");
+  styleDataRows(ws, 3, ws.rowCount);
   return toBuffer(wb);
 }

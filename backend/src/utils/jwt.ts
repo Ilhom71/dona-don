@@ -10,7 +10,12 @@ const ALGORITHM = "HS256";
 // yangi qurilma/brauzerda cookie bo'lmagani uchun baribir login kerak bo'ladi.
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 60; // 60 kun
 
-export async function createToken(payload: { sub: string; username: string }) {
+// `scope` - ixtiyoriy, faqat asosiy admindan MUSTAQIL sessiyalar uchun
+// (masalan SMS Admin bo'limi: scope="sms_admin"). Berilmasa - asosiy admin
+// tokeni (eski xatti-harakat o'zgarmaydi). Har bir himoyalangan middleware
+// o'z scope'ini tekshiradi - shuning uchun bir tokendan ikkinchisi o'rniga
+// foydalanib bo'lmaydi.
+export async function createToken(payload: { sub: string; username: string; scope?: string }) {
   const exp = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS;
   return sign({ ...payload, exp }, SECRET, ALGORITHM);
 }

@@ -20,7 +20,7 @@ Ikkalasi ham mustaqil `package.json`/`bun.lock` ga ega, birga bog'lanmagan (work
 | Frontend | Next.js (App Router, TypeScript), Tailwind CSS, shadcn/ui, lucide-react |
 | Backend | Bun runtime, Hono, Zod (validatsiya) |
 | Database | PostgreSQL, Drizzle ORM |
-| Auth | Bitta admin foydalanuvchi, JWT httpOnly cookie (rollar yo'q) |
+| Auth | Bitta admin foydalanuvchi, JWT httpOnly cookie (rollar yo'q). **Istisno:** SMS bo'limidagi "Admin" (kredit boshqaruv) qismi - foydalanuvchi so'roviga ko'ra asosiy admindan MUSTAQIL, alohida login/parol (`sms_admins` jadvali, `sms_admin_token` cookie) bilan himoyalangan - qara [PLAN.md](./PLAN.md) 25-bosqich |
 
 ## Ishga tushirish
 

@@ -38,7 +38,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ExcelActions } from "@/components/excel-actions";
-import { TablePagination, TableSearch } from "@/components/table-controls";
+import {
+  MobileSortSelect,
+  SortableHead,
+  TablePagination,
+  TableSearch,
+} from "@/components/table-controls";
 import { useTableView } from "@/hooks/use-table-view";
 import { api, apiUrl, ApiError } from "@/lib/api";
 import type { Partner, Sale, PaymentStatus } from "@/lib/types";
@@ -89,7 +94,15 @@ export default function SalesHistoryPage() {
   const view = useTableView(
     data ?? [],
     (s) =>
-      `${s.partner?.name ?? ""} ${itemsSummary(s)} ${s.vehicleNumber ?? ""} ${paymentStatusLabels[s.paymentStatus]}`
+      `${s.partner?.name ?? ""} ${itemsSummary(s)} ${s.vehicleNumber ?? ""} ${paymentStatusLabels[s.paymentStatus]}`,
+    20,
+    // Saralanadigan ustunlar: sana, hamkor, summa, to'langan
+    {
+      date: (s) => Date.parse(s.saleDate),
+      partner: (s) => s.partner?.name,
+      total: (s) => Number(s.totalAmountUzs),
+      paid: (s) => Number(s.paidAmountUzs),
+    }
   );
   // Jami qator (qidiruvdan o'tgan barcha savdolar) - so'mdagi ekvivalentda.
   const totalUzs = view.filtered.reduce((sum, s) => sum + Number(s.totalAmountUzs), 0);
@@ -255,6 +268,10 @@ export default function SalesHistoryPage() {
         </Card>
       ) : (
         <>
+          <MobileSortSelect
+            view={view}
+            options={[{ key: "date", label: "Sana" }, { key: "partner", label: "Hamkor" }, { key: "total", label: "Summa" }, { key: "paid", label: "To'langan" }]}
+          />
           <Card className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
@@ -266,12 +283,12 @@ export default function SalesHistoryPage() {
                       aria-label="Barchasini tanlash"
                     />
                   </TableHead>
-                  <TableHead>Sana</TableHead>
-                  <TableHead>Hamkor</TableHead>
+                  <SortableHead label="Sana" sortKey="date" view={view} />
+                  <SortableHead label="Hamkor" sortKey="partner" view={view} />
                   <TableHead>Mahsulot(lar)</TableHead>
                   <TableHead>Mashina raqami</TableHead>
-                  <TableHead>Summa</TableHead>
-                  <TableHead>To'langan</TableHead>
+                  <SortableHead label="Summa" sortKey="total" view={view} />
+                  <SortableHead label="To'langan" sortKey="paid" view={view} />
                   <TableHead>Holati</TableHead>
                 </TableRow>
               </TableHeader>
@@ -398,6 +415,7 @@ export default function SalesHistoryPage() {
             total={view.total}
             pageSize={view.pageSize}
             onPageChange={view.setPage}
+            onPageSizeChange={view.setPageSize}
           />
         </>
       )}

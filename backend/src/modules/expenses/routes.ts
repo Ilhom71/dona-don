@@ -7,6 +7,7 @@ import {
   restoreExpense,
   type ExpenseCategory,
 } from "./service";
+import { parseDateParam } from "../../utils/date";
 import { requireAuth } from "../../middleware/auth";
 
 const expenseSchema = z.object({
@@ -17,6 +18,10 @@ const expenseSchema = z.object({
   method: z.enum(["cash", "card", "bank"]).optional(),
   description: z.string().min(1, "Tavsif kiritilishi shart"),
   expenseDate: z.coerce.date().optional(),
+}).refine((v) => v.category !== "supplier_payment" || !!v.partnerId, {
+  // Hamkorsiz "yetkazib beruvchiga to'lov" hech kimning qarzini kamaytirmasdan kassadan pul chiqarib yuborardi.
+  message: "Yetkazib beruvchiga to'lov uchun hamkor tanlanishi shart",
+  path: ["partnerId"],
 });
 
 const cancelSchema = z.object({ reason: z.string().nullable().optional() });
@@ -28,8 +33,8 @@ expenseRoutes.get("/", async (c) => {
   const { category, from, to } = c.req.query();
   const list = await listExpenses({
     category: ((category as ExpenseCategory) || undefined),
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+    from: parseDateParam(from),
+    to: parseDateParam(to, { endOfDay: true }),
   });
   return c.json(list);
 });
